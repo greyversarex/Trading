@@ -1,84 +1,91 @@
-# Chart Structure Scanner
+# Сканер Структур Графиков
 
-A Python-based real-time system for detecting visually similar price structures on cryptocurrency charts.
+Python-система для обнаружения визуально похожих ценовых структур на криптовалютных графиках в реальном времени.
 
-## Overview
+## Обзор
 
-This tool continuously scans Binance cryptocurrency markets and finds charts whose price structure is visually similar to a structure provided by the user via a screenshot. It focuses on **structural visual similarity**, not numerical indicators.
+Инструмент непрерывно сканирует криптовалютные рынки Binance и находит графики, ценовая структура которых визуально похожа на структуру, предоставленную пользователем через скриншот. Фокус на **структурном визуальном сходстве**, а не на числовых индикаторах.
 
-## Project Architecture
+## Архитектура проекта
 
 ```
 ├── src/backend/
-│   ├── main.py              # FastAPI application with WebSocket support
-│   ├── image_processor.py   # OpenCV-based image processing for screenshots
-│   ├── structure_extractor.py # Pivot detection and feature extraction
-│   ├── similarity_matcher.py  # Geometric similarity matching
-│   ├── binance_scanner.py     # Real-time Binance WebSocket integration
-│   └── database.py            # SQLite storage for structures/matches
+│   ├── main.py              # FastAPI приложение с WebSocket
+│   ├── image_processor.py   # Обработка изображений OpenCV
+│   ├── structure_extractor.py # Детекция пивотов и извлечение фич
+│   ├── similarity_matcher.py  # Геометрическое сопоставление
+│   ├── binance_scanner.py     # Интеграция с Binance WebSocket
+│   └── database.py            # SQLite хранилище
 ├── static/
-│   └── index.html           # Frontend SPA with Tailwind CSS
-├── data/                    # SQLite database storage
-├── uploads/                 # Uploaded screenshots
-└── run.py                   # Application entry point
+│   └── index.html           # Фронтенд SPA с Tailwind CSS
+├── data/                    # SQLite база данных
+├── uploads/                 # Загруженные скриншоты
+└── run.py                   # Точка входа
 ```
 
-## Core Features
+## Основные функции
 
-### 1. Screenshot Upload
-- Accepts chart screenshots from any platform
-- Automatically detects and isolates the price line using OpenCV
-- Removes noise (UI, grids, axes, labels)
+### 1. Загрузка скриншотов
+- Принимает скриншоты графиков с любой платформы
+- Автоматически выделяет ценовую линию с помощью OpenCV
+- Удаляет шум (UI, сетки, оси, метки)
 
-### 2. Structure Extraction
-- Extracts pivot points (local highs/lows)
-- Calculates relative geometry between points
-- Measures trend tendency, compression/consolidation behavior
-- Classification: Compression, Accumulation, Triangle, Range, Retest, Trend
+### 2. Извлечение структуры
+- Извлекает пивотные точки (локальные максимумы/минимумы)
+- Вычисляет относительную геометрию между точками
+- Измеряет тенденцию тренда, поведение сжатия/консолидации
+- Классификация: Сжатие, Накопление, Треугольник, Диапазон, Ретест, Тренд
 
-### 3. Live Market Scanning
-- Connects to Binance WebSocket API
-- Monitors top 50 trading pairs by volume
-- Multi-timeframe analysis: 1m, 5m, 15m, 1h
+### 3. Сканирование рынка в реальном времени
+- Подключение к Binance WebSocket API
+- Мониторинг топ-50 торговых пар по объёму
+- Мультитаймфреймный анализ: 1м, 3м, 5м, 15м, 30м, 1ч
 
-### 4. Similarity Matching
-- Structure-to-structure comparison (not image-to-image)
-- Geometric and relational similarity
-- Mirror-invariant (bullish/bearish symmetry)
-- Normalized score (0-100%)
-- User-configurable threshold
+### 4. Сопоставление по схожести
+- Сравнение структура-к-структуре (не изображение-к-изображению)
+- Геометрическое и реляционное сходство
+- Зеркальная инвариантность (симметрия бычьих/медвежьих паттернов)
+- Нормализованная оценка (0-100%)
+- Настраиваемый порог
 
-## Tech Stack
+### 5. Обратная связь пользователя
+- Кнопки "Релевантно" / "Нерелевантно" для каждого совпадения
+- Система сохраняет обратную связь для обучения
 
-- **Backend**: Python, FastAPI, OpenCV, NumPy, SciPy, scikit-learn
-- **Frontend**: HTML, Tailwind CSS, Chart.js, WebSocket
-- **Database**: SQLite (via aiosqlite)
-- **Market Data**: Binance WebSocket API
+## Технический стек
 
-## Running the Application
+- **Бэкенд**: Python, FastAPI, OpenCV, NumPy, SciPy, scikit-learn
+- **Фронтенд**: HTML, Tailwind CSS, Chart.js, WebSocket
+- **База данных**: SQLite (via aiosqlite)
+- **Данные рынка**: Binance WebSocket API
+
+## Запуск приложения
 
 ```bash
 python run.py
 ```
 
-The server runs on port 5000.
+Сервер запускается на порту 5000.
 
 ## API Endpoints
 
-- `POST /api/upload` - Upload chart screenshot
-- `POST /api/start-scan` - Start continuous scanning
-- `POST /api/stop-scan` - Stop scanning
-- `POST /api/threshold` - Update similarity threshold
-- `GET /api/status` - Get scanner status
-- `GET /api/structures` - List saved structures
-- `GET /api/matches/{id}` - Get matches for a structure
-- `WS /ws` - WebSocket for real-time updates
+- `POST /api/upload` - Загрузка скриншота графика
+- `POST /api/start-scan` - Начать непрерывное сканирование
+- `POST /api/stop-scan` - Остановить сканирование
+- `POST /api/threshold` - Обновить порог схожести
+- `POST /api/feedback` - Отправить обратную связь
+- `GET /api/status` - Получить статус сканера
+- `GET /api/structures` - Список сохранённых структур
+- `GET /api/matches/{id}` - Получить совпадения для структуры
+- `WS /ws` - WebSocket для обновлений в реальном времени
 
-## Recent Changes
+## Недавние изменения
 
-- 2024-12: Initial implementation with all core MVP features
-  - Image processing pipeline with OpenCV
-  - Structure extraction with pivot detection
-  - Binance WebSocket integration
-  - Real-time similarity matching
-  - Web interface with live updates
+- 2024-12: Полная реализация MVP
+  - Конвейер обработки изображений с OpenCV
+  - Извлечение структур с детекцией пивотов
+  - Интеграция с Binance WebSocket
+  - Сопоставление схожести в реальном времени
+  - Русскоязычный веб-интерфейс
+  - Кнопки обратной связи (релевантно/нерелевантно)
+  - 6 таймфреймов (1м, 3м, 5м, 15м, 30м, 1ч)
