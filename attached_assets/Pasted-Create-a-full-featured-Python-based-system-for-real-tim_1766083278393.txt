@@ -1,0 +1,139 @@
+Create a full-featured Python-based system for real-time detection of visually similar PRICE STRUCTURES on cryptocurrency charts.
+
+PROJECT PURPOSE:
+Build a personal analytical tool that continuously scans the cryptocurrency market (Binance) and finds charts whose PRICE STRUCTURE is visually similar to a structure provided by the user via a screenshot.
+
+This project is focused on STRUCTURAL VISUAL SIMILARITY, not numerical indicators.
+
+THIS IS NOT:
+- Indicator-based analysis
+- Candle counting
+- Fixed time alignment
+- Prediction or trading signal generation
+
+CORE CONCEPT:
+The system must extract an ABSTRACT STRUCTURAL REPRESENTATION of a chart, not compare raw images.
+
+The structure consists of:
+- Key swing / pivot points
+- Relative distances between pivots
+- Directional sequence
+- Compression / expansion behavior
+- Overall geometric shape of price movement
+
+INPUT:
+- User uploads any screenshot of a price chart (any platform, any style).
+- Screenshot may contain noise (UI, grids, axes, labels).
+- Screenshot may represent only a fragment of a chart.
+
+IMAGE PROCESSING:
+1. Automatically detect and isolate the price line from the screenshot.
+2. Remove all irrelevant elements (background, grid, UI).
+3. Convert the detected price into a single continuous LINE.
+4. Normalize the line:
+   - scale-invariant
+   - volatility-invariant
+   - time-invariant
+5. Extract structural features from the line:
+   - pivot points (local highs/lows)
+   - relative geometry between points
+   - trend tendency
+   - compression / consolidation behavior
+
+STRUCTURE TYPES (automatic classification):
+- Compression
+- Accumulation
+- Triangle
+- Range
+- Retest
+- Unknown / hybrid
+
+LIVE MARKET SCANNING:
+- Market: Cryptocurrency
+- Exchange: Binance
+- Instruments: 50–500 trading pairs
+- Data source: Binance WebSocket API
+- Continuous 24/7 scanning
+
+TIMEFRAMES:
+The system must generate and analyze structures on multiple timeframes:
+- 30 seconds
+- 1 minute
+- 3 minutes
+- 5 minutes
+- 15 minutes
+- 30 minutes
+- 1 hour
+
+STRUCTURE EXTRACTION FROM LIVE DATA:
+1. Build price lines from live candle data.
+2. Apply the same normalization and structure extraction logic as used for screenshots.
+3. Structures must be:
+   - scale-invariant
+   - volatility-independent
+   - tolerant to different lengths
+   - mirror-invariant (bullish and bearish symmetry supported)
+
+MATCHING LOGIC:
+- Compare STRUCTURE TO STRUCTURE, not image to image.
+- Use geometric and relational similarity.
+- Prioritize maximum accuracy over speed.
+- Similarity score must be normalized (0–100%).
+- User must be able to set a minimum similarity threshold.
+- Return ALL matches above the threshold.
+
+RESULT PRESENTATION:
+Display results in a table containing:
+- Trading pair
+- Timeframe
+- Detected structure type
+- Similarity score
+- Live chart preview
+- Timestamp
+
+HISTORICAL CONTEXT (NO FORECASTING):
+- Allow searching historical data for past structures similar to the uploaded one.
+- Show what happened AFTER similar structures in the past.
+- Provide raw outcomes only, no predictions or signals.
+
+USER FEEDBACK & LEARNING:
+- User can mark matches as:
+  - relevant
+  - irrelevant
+- System adjusts internal similarity weighting based on feedback.
+
+DATA STORAGE:
+- Store:
+  - Uploaded structures
+  - Detected matches
+  - User feedback
+  - Historical structure library
+
+TECH STACK REQUIREMENTS:
+Backend:
+- Python
+- FastAPI
+- OpenCV
+- NumPy
+- WebSockets
+- SQLite or PostgreSQL
+
+Frontend:
+- Simple web interface
+- Screenshot upload
+- Similarity threshold control
+- Start / stop continuous scan
+- Live-updating results table
+
+NON-GOALS:
+- No RSI, MACD, indicators
+- No buy/sell signals
+- No price prediction
+- No fixed candle pattern rules
+
+FINAL RESULT:
+A working system that:
+- Accepts any chart screenshot
+- Extracts its abstract price structure
+- Continuously scans Binance markets
+- Finds and displays visually and structurally similar price movements in real time
