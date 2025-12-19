@@ -50,6 +50,11 @@ class FeedbackRequest(BaseModel):
     is_relevant: bool
 
 
+class PresetRequest(BaseModel):
+    preset_type: str
+    min_touches: int = 3
+
+
 @app.on_event("startup")
 async def startup():
     await database.initialize()
@@ -204,6 +209,109 @@ async def upload_chart(file: UploadFile = File(...)):
             "success": True,
             "structure_id": structure_id,
             "filename": filename,
+            "structure_type": features.structure_type.value,
+            "trend_direction": float(features.trend_direction),
+            "volatility": float(features.volatility),
+            "compression_ratio": float(features.compression_ratio),
+            "num_pivots": len(features.pivot_points),
+            "pivot_points": pivot_points,
+            "normalized_line": features.normalized_line.tolist()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def generate_preset_pattern(preset_type: str, min_touches: int = 3) -> np.ndarray:
+    """Generate a synthetic pattern based on preset type."""
+    points = 100
+    x = np.linspace(0, 1, points)
+    
+    if preset_type == 'triangle_up':
+        upper = 1.0 - x * 0.4
+        lower = 0.0 + x * 0.4
+        mid = (upper + lower) / 2
+        wave = np.sin(x * 8 * np.pi) * (0.5 - x) * 0.5
+        return mid + wave
+    
+    elif preset_type == 'triangle_down':
+        upper = 0.5 + x * 0.4
+        lower = 0.5 - x * 0.4
+        mid = (upper + lower) / 2
+        wave = np.sin(x * 8 * np.pi) * x * 0.5
+        return mid + wave
+    
+    elif preset_type == 'trend_up':
+        trend = x * 0.8 + 0.1
+        wave = np.sin(x * 6 * np.pi) * 0.08
+        return trend + wave
+    
+    elif preset_type == 'trend_down':
+        trend = (1 - x) * 0.8 + 0.1
+        wave = np.sin(x * 6 * np.pi) * 0.08
+        return trend + wave
+    
+    elif preset_type == 'range':
+        wave = np.sin(x * 8 * np.pi) * 0.15 + 0.5
+        return wave
+    
+    elif preset_type == 'compression':
+        decay = np.exp(-x * 2)
+        wave = np.sin(x * 10 * np.pi) * 0.3 * decay + 0.5
+        return wave
+    
+    elif preset_type == 'level':
+        base = np.random.rand(points) * 0.3 + 0.35
+        level_pos = 0.7
+        for i in range(min_touches):
+            touch_idx = int((i + 0.5) / min_touches * points * 0.9)
+            if touch_idx < points:
+                base[max(0, touch_idx-3):min(points, touch_idx+3)] = level_pos + np.random.randn() * 0.02
+        return base
+    
+    else:
+        return np.sin(x * 4 * np.pi) * 0.3 + 0.5
+
+
+@app.post("/api/preset")
+async def select_preset(data: PresetRequest):
+    """Select a preset pattern for scanning."""
+    global current_reference, current_structure_id
+    
+    try:
+        pattern = generate_preset_pattern(data.preset_type, data.min_touches)
+        
+        features = structure_extractor.extract_features(pattern)
+        
+        if features is None:
+            raise HTTPException(status_code=400, detail="Could not extract structure features")
+        
+        current_reference = features
+        current_structure_id = None
+        
+        preset_names = {
+            'triangle_up': 'Сходящийся треугольник',
+            'triangle_down': 'Расширяющийся треугольник',
+            'trend_up': 'Восходящий тренд',
+            'trend_down': 'Нисходящий тренд',
+            'range': 'Боковой диапазон',
+            'compression': 'Сжатие/Консолидация',
+            'level': f'Уровень ({data.min_touches} касаний)'
+        }
+        
+        pivot_points = []
+        for p in features.pivot_points:
+            pivot_points.append({
+                "index": int(p.index),
+                "value": float(p.value),
+                "is_high": p.is_high
+            })
+        
+        return {
+            "success": True,
+            "preset_name": preset_names.get(data.preset_type, data.preset_type),
             "structure_type": features.structure_type.value,
             "trend_direction": float(features.trend_direction),
             "volatility": float(features.volatility),

@@ -58,6 +58,49 @@
                     </div>
                 </div>
 
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4">Готовые Паттерны</h2>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="selectPreset('triangle_up')" class="preset-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left">
+                            <div class="font-medium">Треугольник ▲</div>
+                            <div class="text-xs text-gray-400">Сходящийся</div>
+                        </button>
+                        <button onclick="selectPreset('triangle_down')" class="preset-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left">
+                            <div class="font-medium">Треугольник ▼</div>
+                            <div class="text-xs text-gray-400">Расширяющийся</div>
+                        </button>
+                        <button onclick="selectPreset('trend_up')" class="preset-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left">
+                            <div class="font-medium">Тренд ↑</div>
+                            <div class="text-xs text-gray-400">Бычий</div>
+                        </button>
+                        <button onclick="selectPreset('trend_down')" class="preset-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left">
+                            <div class="font-medium">Тренд ↓</div>
+                            <div class="text-xs text-gray-400">Медвежий</div>
+                        </button>
+                        <button onclick="selectPreset('range')" class="preset-btn bg-gray-700 hover:bg-blue-600 p-3 rounded-lg text-sm text-left">
+                            <div class="font-medium">Диапазон</div>
+                            <div class="text-xs text-gray-400">Боковик</div>
+                        </button>
+                        <button onclick="selectPreset('compression')" class="preset-btn bg-gray-700 hover:bg-yellow-600 p-3 rounded-lg text-sm text-left">
+                            <div class="font-medium">Сжатие</div>
+                            <div class="text-xs text-gray-400">Консолидация</div>
+                        </button>
+                    </div>
+                    
+                    <div class="mt-4 pt-4 border-t border-gray-700">
+                        <h3 class="text-sm font-medium mb-3">Поиск уровней</h3>
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs text-gray-400">Мин. касаний:</label>
+                            <input type="number" id="levelTouches" value="3" min="2" max="10" 
+                                   class="w-16 bg-gray-700 rounded px-2 py-1 text-sm">
+                            <button onclick="selectPreset('level')" 
+                                    class="flex-1 bg-gray-700 hover:bg-orange-600 py-1 px-3 rounded text-sm">
+                                Уровни
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="gallerySection" class="bg-gray-800 rounded-lg p-6">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-semibold">Загруженные Структуры</h2>
@@ -643,6 +686,35 @@
                 
             } catch (error) {
                 console.error('Ошибка выбора структуры:', error);
+            }
+        }
+
+        async function selectPreset(presetType) {
+            let touches = 3;
+            if (presetType === 'level') {
+                touches = parseInt(document.getElementById('levelTouches').value) || 3;
+            }
+            
+            try {
+                const response = await fetch('/api/preset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ preset_type: presetType, min_touches: touches })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Ошибка');
+                }
+                
+                const data = await response.json();
+                currentStructure = data;
+                
+                document.getElementById('uploadedImage').classList.add('hidden');
+                showStructureInfo(data);
+                
+            } catch (error) {
+                alert('Ошибка выбора паттерна: ' + error.message);
             }
         }
 
