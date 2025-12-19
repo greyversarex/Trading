@@ -150,6 +150,12 @@
                             <canvas id="pivotChart"></canvas>
                         </div>
                     </div>
+                    
+                    <button id="searchByUploadedBtn" 
+                            onclick="startScanWithUploaded()"
+                            class="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition hidden">
+                        🔍 Искать по этому скриншоту
+                    </button>
                 </div>
 
                 <div class="bg-gray-800 rounded-lg p-6">
@@ -771,10 +777,17 @@
             const info = document.getElementById('structureInfo');
             info.classList.remove('hidden');
             
+            const searchByUploadedBtn = document.getElementById('searchByUploadedBtn');
+            
             if (data.filename) {
                 const img = document.getElementById('uploadedImage');
                 img.src = `/api/uploads/${data.filename}`;
                 img.classList.remove('hidden');
+                searchByUploadedBtn.classList.remove('hidden');
+            } else if (data.structure_id || data.id) {
+                searchByUploadedBtn.classList.remove('hidden');
+            } else {
+                searchByUploadedBtn.classList.add('hidden');
             }
             
             document.getElementById('structureType').textContent = 
@@ -981,18 +994,53 @@
                 
                 const data = await response.json();
                 currentStructure = data;
+                currentStructure.searchMode = 'preset';
+                currentStructure.patternType = presetType;
                 
                 document.getElementById('uploadedImage').classList.add('hidden');
                 showStructureInfo(data);
+                
+                highlightActivePreset(presetType);
+                
+                matches = [];
+                matchIdCounter = 0;
+                renderMatches();
+                
+                await startScanWithMode('preset', presetType);
                 
             } catch (error) {
                 alert('Ошибка выбора паттерна: ' + error.message);
             }
         }
+        
+        function highlightActivePreset(presetType) {
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-600');
+            });
+            
+            const activeBtn = document.querySelector(`[onclick*="selectPreset('${presetType}')"]`);
+            if (activeBtn) {
+                activeBtn.classList.add('ring-2', 'ring-blue-500');
+            }
+        }
 
-        async function startScan() {
+        async function startScanWithMode(mode, patternType = null, structureId = null) {
             try {
-                const response = await fetch('/api/start-scan', { method: 'POST' });
+                const body = { mode };
+                if (patternType) body.pattern_type = patternType;
+                if (structureId) body.structure_id = structureId;
+                
+                const response = await fetch('/api/start-scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Ошибка');
+                }
+                
                 const data = await response.json();
                 
                 if (data.status === 'started') {
@@ -1002,6 +1050,32 @@
             } catch (error) {
                 alert('Ошибка запуска сканирования: ' + error.message);
             }
+        }
+
+        async function startScan() {
+            if (currentStructure?.searchMode === 'preset' && currentStructure?.patternType) {
+                await startScanWithMode('preset', currentStructure.patternType);
+            } else if (currentStructure?.structure_id || currentStructure?.id) {
+                await startScanWithMode('uploaded', null, currentStructure.structure_id || currentStructure.id);
+            } else {
+                alert('Выберите паттерн или загрузите скриншот');
+            }
+        }
+        
+        async function startScanWithUploaded() {
+            const structureId = currentStructure?.structure_id || currentStructure?.id;
+            if (!structureId) {
+                alert('Сначала загрузите скриншот графика');
+                return;
+            }
+            
+            matches = [];
+            matchIdCounter = 0;
+            renderMatches();
+            
+            highlightActivePreset(null);
+            
+            await startScanWithMode('uploaded', null, structureId);
         }
 
         async function stopScan() {

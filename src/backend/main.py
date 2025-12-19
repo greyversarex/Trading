@@ -39,6 +39,8 @@ current_structure_id: Optional[int] = None
 scan_threshold: float = 50.0
 is_scanning: bool = False
 scan_task: Optional[asyncio.Task] = None
+search_mode: str = "preset"  # "preset" or "uploaded"
+search_pattern_type: Optional[str] = None  # For preset mode filtering
 
 
 class ThresholdUpdate(BaseModel):
@@ -53,6 +55,12 @@ class FeedbackRequest(BaseModel):
 class PresetRequest(BaseModel):
     preset_type: str
     min_touches: int = 3
+
+
+class StartScanRequest(BaseModel):
+    mode: str = "preset"  # "preset" or "uploaded"
+    pattern_type: Optional[str] = None  # For preset: triangle_up, triangle_down, trend_up, trend_down, range, compression
+    structure_id: Optional[int] = None  # For uploaded: ID of saved structure
 
 
 @app.on_event("startup")
@@ -332,15 +340,47 @@ async def select_preset(data: PresetRequest):
 
 
 @app.post("/api/start-scan")
-async def start_scan():
+async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, current_reference
+    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id
     
-    if current_reference is None:
-        raise HTTPException(status_code=400, detail="Please upload a chart first")
+    if data is None:
+        data = StartScanRequest()
+    
+    search_mode = data.mode
+    search_pattern_type = data.pattern_type
+    
+    if data.mode == "preset":
+        if data.pattern_type is None:
+            raise HTTPException(status_code=400, detail="pattern_type required for preset mode")
+        
+        pattern = generate_preset_pattern(data.pattern_type)
+        reference = structure_extractor.extract_features(pattern)
+        
+        if reference is None:
+            raise HTTPException(status_code=400, detail=f"Unknown preset pattern: {data.pattern_type}")
+        
+        current_reference = reference
+        current_structure_id = None
+        
+    elif data.mode == "uploaded":
+        if data.structure_id is None:
+            if current_reference is None:
+                raise HTTPException(status_code=400, detail="No structure selected. Upload a chart or provide structure_id")
+        else:
+            structure = await database.get_structure(data.structure_id)
+            if structure is None:
+                raise HTTPException(status_code=404, detail="Structure not found")
+            
+            features_dict = json.loads(structure["features"]) if isinstance(structure["features"], str) else structure["features"]
+            current_reference = structure_extractor.features_from_dict(features_dict)
+            current_structure_id = data.structure_id
+    else:
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset' or 'uploaded'")
     
     if is_scanning:
-        return {"status": "already_running"}
+        await stop_scan()
+        await asyncio.sleep(0.5)
     
     is_scanning = True
     scan_task = asyncio.create_task(run_continuous_scan())
@@ -348,7 +388,12 @@ async def start_scan():
     await asyncio.sleep(2)
     asyncio.create_task(run_initial_scan())
     
-    return {"status": "started", "num_symbols": len(scanner.symbols)}
+    return {
+        "status": "started",
+        "mode": search_mode,
+        "pattern_type": search_pattern_type,
+        "num_symbols": len(scanner.symbols)
+    }
 
 
 @app.post("/api/stop-scan")

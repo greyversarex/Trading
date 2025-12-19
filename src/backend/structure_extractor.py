@@ -304,3 +304,43 @@ class StructureExtractor:
         """Extract features from candle close prices."""
         line = np.array(closes)
         return self.extract_features(line)
+    
+    def features_from_dict(self, data: dict) -> StructureFeatures:
+        """Reconstruct StructureFeatures from a dictionary (e.g., from database)."""
+        pivot_points = []
+        for p in data.get("pivot_points", []):
+            pivot_points.append(PivotPoint(
+                index=p["index"],
+                value=p["value"],
+                is_high=p["is_high"],
+                relative_position=p.get("relative_position", p["index"] / 100)
+            ))
+        
+        normalized_line = np.array(data.get("normalized_line", []))
+        pivot_sequence = data.get("pivot_sequence", [])
+        relative_distances = data.get("relative_distances", [])
+        trend_direction = data.get("trend_direction", 0.0)
+        volatility = data.get("volatility", 0.0)
+        compression_ratio = data.get("compression_ratio", 0.0)
+        
+        structure_type_str = data.get("structure_type", "range")
+        structure_type = StructureType(structure_type_str) if isinstance(structure_type_str, str) else structure_type_str
+        
+        feature_vector = np.array(data.get("feature_vector", []))
+        if len(feature_vector) == 0:
+            feature_vector = self.create_feature_vector(
+                normalized_line, pivot_sequence, relative_distances,
+                trend_direction, volatility, compression_ratio
+            )
+        
+        return StructureFeatures(
+            pivot_points=pivot_points,
+            normalized_line=normalized_line,
+            pivot_sequence=pivot_sequence,
+            relative_distances=relative_distances,
+            trend_direction=trend_direction,
+            volatility=volatility,
+            compression_ratio=compression_ratio,
+            structure_type=structure_type,
+            feature_vector=feature_vector
+        )
