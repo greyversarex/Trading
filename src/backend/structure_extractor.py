@@ -2,7 +2,7 @@ import numpy as np
 from scipy.signal import argrelextrema, savgol_filter
 from scipy.stats import linregress
 from typing import List, Tuple, Dict, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -23,6 +23,26 @@ class PivotPoint:
     value: float
     is_high: bool
     relative_position: float
+    
+    def __lt__(self, other):
+        if not isinstance(other, PivotPoint):
+            return NotImplemented
+        return self.index < other.index
+    
+    def __le__(self, other):
+        if not isinstance(other, PivotPoint):
+            return NotImplemented
+        return self.index <= other.index
+    
+    def __gt__(self, other):
+        if not isinstance(other, PivotPoint):
+            return NotImplemented
+        return self.index > other.index
+    
+    def __ge__(self, other):
+        if not isinstance(other, PivotPoint):
+            return NotImplemented
+        return self.index >= other.index
 
 
 @dataclass
