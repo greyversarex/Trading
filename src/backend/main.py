@@ -391,12 +391,17 @@ async def get_threshold():
 @app.get("/api/status")
 async def get_status():
     """Get current scanner status."""
+    stats = scanner.get_structure_stats()
     return {
         "is_scanning": is_scanning,
         "has_reference": current_reference is not None,
         "threshold": scan_threshold,
         "num_symbols": len(scanner.symbols) if scanner.symbols else 0,
-        "structure_id": current_structure_id
+        "structure_id": current_structure_id,
+        "data_available": stats.get("data_available", False),
+        "total_structures": stats.get("total_structures", 0),
+        "working_endpoint": stats.get("working_endpoint"),
+        "last_error": stats.get("last_error")
     }
 
 

@@ -185,6 +185,14 @@
                 <div class="bg-gray-800 rounded-lg p-6">
                     <h2 class="text-xl font-semibold mb-4">Статистика</h2>
                     <div class="space-y-2 text-sm">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-400">Данные Binance:</span>
+                            <span id="dataStatus" class="font-medium text-yellow-400">Проверка...</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Структур загружено:</span>
+                            <span id="totalStructures" class="font-medium">0</span>
+                        </div>
                         <div class="flex justify-between">
                             <span class="text-gray-400">Торговых пар:</span>
                             <span id="numSymbols" class="font-medium">0</span>
@@ -202,6 +210,7 @@
                             <span id="irrelevantCount" class="font-medium text-red-400">0</span>
                         </div>
                     </div>
+                    <div id="dataError" class="mt-3 p-2 bg-red-900/30 rounded text-red-400 text-xs hidden"></div>
                 </div>
             </div>
 
@@ -812,6 +821,25 @@
             fetch('/api/status').then(r => r.json()).then(data => {
                 updateStatus(data.is_scanning);
                 document.getElementById('numSymbols').textContent = data.num_symbols || 0;
+                document.getElementById('totalStructures').textContent = data.total_structures || 0;
+                
+                const dataStatus = document.getElementById('dataStatus');
+                const dataError = document.getElementById('dataError');
+                
+                if (data.data_available) {
+                    dataStatus.textContent = 'Доступны';
+                    dataStatus.className = 'font-medium text-green-400';
+                    dataError.classList.add('hidden');
+                } else if (data.last_error) {
+                    dataStatus.textContent = 'Недоступны';
+                    dataStatus.className = 'font-medium text-red-400';
+                    dataError.textContent = data.last_error;
+                    dataError.classList.remove('hidden');
+                } else {
+                    dataStatus.textContent = 'Проверка...';
+                    dataStatus.className = 'font-medium text-yellow-400';
+                }
+                
                 if (data.has_reference) {
                     document.getElementById('startBtn').disabled = false;
                 }
