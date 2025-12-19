@@ -1,10 +1,8 @@
 import asyncio
-import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass, field
-import websockets
 import aiohttp
 
 from .structure_extractor import StructureExtractor, StructureFeatures
@@ -30,7 +28,7 @@ class SymbolData:
 
 
 class BinanceScanner:
-    """Scans Binance market for price structures using WebSocket."""
+    """Scans Binance market for price structures using REST API polling."""
     
     TIMEFRAMES = {
         "1m": 60,
@@ -50,111 +48,148 @@ class BinanceScanner:
         "1h": 100,
     }
     
+    BASE_URL = "https://api.binance.com"
+    
     def __init__(self, num_symbols: int = 50):
         self.num_symbols = num_symbols
         self.symbols: List[str] = []
         self.symbol_data: Dict[str, SymbolData] = {}
         self.structure_extractor = StructureExtractor()
         self.is_running = False
-        self.ws_connections: List[Any] = []
         self.on_update_callback: Optional[Callable] = None
         self.last_structures: Dict[str, Dict[str, StructureFeatures]] = {}
+        self._poll_task: Optional[asyncio.Task] = None
     
     async def fetch_top_symbols(self) -> List[str]:
         """Fetch top trading pairs by volume from Binance."""
-        url = "https://api.binance.com/api/v3/ticker/24hr"
+        url = f"{self.BASE_URL}/api/v3/ticker/24hr"
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
-                
-                data = await response.json()
-                
-                usdt_pairs = [
-                    item for item in data 
-                    if item['symbol'].endswith('USDT') and 
-                    float(item.get('quoteVolume', 0)) > 0
-                ]
-                
-                usdt_pairs.sort(key=lambda x: float(x.get('quoteVolume', 0)), reverse=True)
-                
-                return [item['symbol'] for item in usdt_pairs[:self.num_symbols]]
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status != 200:
+                        print(f"Error fetching symbols: {response.status}")
+                        return self._get_default_symbols()
+                    
+                    data = await response.json()
+                    
+                    usdt_pairs = [
+                        item for item in data 
+                        if item['symbol'].endswith('USDT') and 
+                        float(item.get('quoteVolume', 0)) > 0
+                    ]
+                    
+                    usdt_pairs.sort(key=lambda x: float(x.get('quoteVolume', 0)), reverse=True)
+                    
+                    return [item['symbol'] for item in usdt_pairs[:self.num_symbols]]
+        except Exception as e:
+            print(f"Error fetching symbols: {e}")
+            return self._get_default_symbols()
     
-    async def fetch_historical_candles(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
-        """Fetch historical candle data from Binance REST API."""
-        url = f"https://api.binance.com/api/v3/klines"
+    def _get_default_symbols(self) -> List[str]:
+        """Return default symbols if API fails."""
+        return [
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+            "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT",
+            "LINKUSDT", "LTCUSDT", "ATOMUSDT", "UNIUSDT", "XLMUSDT",
+            "TRXUSDT", "NEARUSDT", "APTUSDT", "FILUSDT", "ARBUSDT"
+        ]
+    
+    async def fetch_candles(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
+        """Fetch candle data from Binance REST API."""
+        url = f"{self.BASE_URL}/api/v3/klines"
         params = {
             "symbol": symbol,
             "interval": interval,
             "limit": limit
         }
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                if response.status != 200:
-                    return []
-                
-                data = await response.json()
-                
-                candles = []
-                for item in data:
-                    candles.append(CandleData(
-                        open_time=item[0],
-                        open=float(item[1]),
-                        high=float(item[2]),
-                        low=float(item[3]),
-                        close=float(item[4]),
-                        volume=float(item[5]),
-                        close_time=item[6]
-                    ))
-                
-                return candles
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status != 200:
+                        return []
+                    
+                    data = await response.json()
+                    
+                    candles = []
+                    for item in data:
+                        candles.append(CandleData(
+                            open_time=item[0],
+                            open=float(item[1]),
+                            high=float(item[2]),
+                            low=float(item[3]),
+                            close=float(item[4]),
+                            volume=float(item[5]),
+                            close_time=item[6]
+                        ))
+                    
+                    return candles
+        except Exception as e:
+            print(f"Error fetching candles for {symbol} {interval}: {e}")
+            return []
     
     async def initialize_symbols(self):
         """Initialize symbol list and fetch initial candle data."""
+        print("Fetching top symbols...")
         self.symbols = await self.fetch_top_symbols()
+        print(f"Got {len(self.symbols)} symbols")
         
         for symbol in self.symbols:
             self.symbol_data[symbol] = SymbolData(symbol=symbol)
         
-        tasks = []
-        for symbol in self.symbols:
-            for timeframe in self.TIMEFRAMES.keys():
-                tasks.append(self._init_symbol_timeframe(symbol, timeframe))
-        
-        await asyncio.gather(*tasks, return_exceptions=True)
-        
+        await self._update_all_candles()
         self._update_all_structures()
+        print(f"Initialized {len(self.symbols)} symbols with structures")
     
-    async def _init_symbol_timeframe(self, symbol: str, timeframe: str):
-        """Initialize candles for a symbol/timeframe pair."""
+    async def _update_all_candles(self):
+        """Fetch candles for all symbols and timeframes."""
+        batch_size = 5
+        
+        for i in range(0, len(self.symbols), batch_size):
+            batch = self.symbols[i:i + batch_size]
+            tasks = []
+            
+            for symbol in batch:
+                for timeframe in self.TIMEFRAMES.keys():
+                    tasks.append(self._update_symbol_candles(symbol, timeframe))
+            
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.sleep(0.5)
+    
+    async def _update_symbol_candles(self, symbol: str, timeframe: str):
+        """Update candles for a specific symbol/timeframe."""
         try:
-            candles = await self.fetch_historical_candles(
-                symbol, timeframe, self.CANDLE_COUNTS[timeframe]
-            )
-            self.symbol_data[symbol].candles[timeframe] = candles
+            candles = await self.fetch_candles(symbol, timeframe, self.CANDLE_COUNTS[timeframe])
+            if candles:
+                self.symbol_data[symbol].candles[timeframe] = candles
+                self.symbol_data[symbol].last_update = time.time()
         except Exception as e:
-            print(f"Error initializing {symbol} {timeframe}: {e}")
-            self.symbol_data[symbol].candles[timeframe] = []
+            print(f"Error updating {symbol} {timeframe}: {e}")
     
-    def _update_structure(self, symbol: str, timeframe: str):
-        """Update structure for a symbol/timeframe."""
+    def _update_structure(self, symbol: str, timeframe: str) -> bool:
+        """Update structure for a symbol/timeframe. Returns True if structure changed."""
         if symbol not in self.symbol_data:
-            return
+            return False
         
         candles = self.symbol_data[symbol].candles.get(timeframe, [])
         if len(candles) < 20:
-            return
+            return False
         
         closes = [c.close for c in candles]
         features = self.structure_extractor.extract_from_candles(closes)
         
+        old_features = self.symbol_data[symbol].structures.get(timeframe)
         self.symbol_data[symbol].structures[timeframe] = features
         
         if symbol not in self.last_structures:
             self.last_structures[symbol] = {}
         self.last_structures[symbol][timeframe] = features
+        
+        return old_features is None or (
+            old_features.structure_type != features.structure_type or
+            abs(old_features.trend_direction - features.trend_direction) > 0.1
+        )
     
     def _update_all_structures(self):
         """Update structures for all symbols and timeframes."""
@@ -162,84 +197,23 @@ class BinanceScanner:
             for timeframe in self.TIMEFRAMES.keys():
                 self._update_structure(symbol, timeframe)
     
-    async def _process_kline(self, data: dict):
-        """Process incoming kline/candle data from WebSocket."""
-        try:
-            kline = data.get('k', {})
-            symbol = kline.get('s', '')
-            interval = kline.get('i', '')
-            is_closed = kline.get('x', False)
-            
-            if symbol not in self.symbol_data:
-                return
-            
-            if interval not in self.TIMEFRAMES:
-                return
-            
-            candle = CandleData(
-                open_time=kline.get('t', 0),
-                open=float(kline.get('o', 0)),
-                high=float(kline.get('h', 0)),
-                low=float(kline.get('l', 0)),
-                close=float(kline.get('c', 0)),
-                volume=float(kline.get('v', 0)),
-                close_time=kline.get('T', 0)
-            )
-            
-            candles = self.symbol_data[symbol].candles.get(interval, [])
-            
-            if candles and candles[-1].open_time == candle.open_time:
-                candles[-1] = candle
-            else:
-                candles.append(candle)
-                if len(candles) > self.CANDLE_COUNTS[interval]:
-                    candles.pop(0)
-            
-            self.symbol_data[symbol].candles[interval] = candles
-            self.symbol_data[symbol].last_update = time.time()
-            
-            if is_closed:
-                self._update_structure(symbol, interval)
-                
-                if self.on_update_callback:
-                    await self.on_update_callback(symbol, interval)
-        
-        except Exception as e:
-            print(f"Error processing kline: {e}")
-    
-    def _create_stream_name(self, symbols: List[str], timeframe: str) -> str:
-        """Create WebSocket stream name for multiple symbols."""
-        streams = [f"{s.lower()}@kline_{timeframe}" for s in symbols]
-        return "/".join(streams)
-    
-    async def _run_websocket(self, symbols: List[str], timeframe: str):
-        """Run WebSocket connection for a set of symbols."""
-        stream_names = [f"{s.lower()}@kline_{timeframe}" for s in symbols]
-        url = f"wss://stream.binance.com:9443/stream?streams={'/'.join(stream_names)}"
-        
+    async def _poll_loop(self):
+        """Main polling loop for updating candle data."""
         while self.is_running:
             try:
-                async with websockets.connect(url, ping_interval=20) as ws:
-                    self.ws_connections.append(ws)
-                    
-                    while self.is_running:
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=30)
-                            data = json.loads(msg)
-                            
-                            if 'data' in data:
-                                await self._process_kline(data['data'])
-                        
-                        except asyncio.TimeoutError:
-                            await ws.ping()
-                        except Exception as e:
-                            print(f"WebSocket receive error: {e}")
-                            break
-            
+                await self._update_all_candles()
+                
+                for symbol in self.symbols:
+                    for timeframe in self.TIMEFRAMES.keys():
+                        changed = self._update_structure(symbol, timeframe)
+                        if changed and self.on_update_callback:
+                            await self.on_update_callback(symbol, timeframe)
+                
+                await asyncio.sleep(30)
+                
             except Exception as e:
-                print(f"WebSocket connection error: {e}")
-                if self.is_running:
-                    await asyncio.sleep(5)
+                print(f"Error in poll loop: {e}")
+                await asyncio.sleep(10)
     
     async def start(self, on_update: Optional[Callable] = None):
         """Start the scanner."""
@@ -251,27 +225,19 @@ class BinanceScanner:
         
         await self.initialize_symbols()
         
-        batch_size = 10
-        tasks = []
-        
-        for timeframe in self.TIMEFRAMES.keys():
-            for i in range(0, len(self.symbols), batch_size):
-                batch = self.symbols[i:i + batch_size]
-                tasks.append(asyncio.create_task(self._run_websocket(batch, timeframe)))
-        
-        await asyncio.gather(*tasks, return_exceptions=True)
+        self._poll_task = asyncio.create_task(self._poll_loop())
     
     async def stop(self):
         """Stop the scanner."""
         self.is_running = False
         
-        for ws in self.ws_connections:
+        if self._poll_task:
+            self._poll_task.cancel()
             try:
-                await ws.close()
-            except:
+                await self._poll_task
+            except asyncio.CancelledError:
                 pass
-        
-        self.ws_connections.clear()
+            self._poll_task = None
     
     def get_all_structures(self) -> List[tuple]:
         """Get all current structures for matching."""

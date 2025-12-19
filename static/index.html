@@ -26,6 +26,15 @@
             width: 120px;
             height: 40px;
         }
+        .gallery-item {
+            transition: all 0.2s ease;
+        }
+        .gallery-item:hover {
+            transform: scale(1.02);
+        }
+        .gallery-item.active {
+            ring: 2px solid #3b82f6;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen">
@@ -49,8 +58,23 @@
                     </div>
                 </div>
 
+                <div id="gallerySection" class="bg-gray-800 rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold">Загруженные Структуры</h2>
+                        <button id="refreshGallery" class="text-gray-400 hover:text-white text-sm">Обновить</button>
+                    </div>
+                    <div id="gallery" class="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto">
+                        <p class="col-span-2 text-gray-500 text-center py-4">Нет загруженных структур</p>
+                    </div>
+                </div>
+
                 <div id="structureInfo" class="bg-gray-800 rounded-lg p-6 hidden">
-                    <h2 class="text-xl font-semibold mb-4">Обнаруженная Структура</h2>
+                    <h2 class="text-xl font-semibold mb-4">Анализ Структуры</h2>
+                    
+                    <div class="mb-4">
+                        <img id="uploadedImage" src="" alt="Загруженный график" class="w-full rounded-lg mb-3 hidden">
+                    </div>
+                    
                     <div class="space-y-3">
                         <div class="flex justify-between">
                             <span class="text-gray-400">Тип:</span>
@@ -69,8 +93,15 @@
                             <span id="structurePivots" class="font-medium">-</span>
                         </div>
                     </div>
+                    
                     <div class="mt-4">
-                        <canvas id="referenceChart" class="w-full h-24"></canvas>
+                        <p class="text-sm text-gray-400 mb-2">Извлечённая структура:</p>
+                        <canvas id="referenceChart" class="w-full h-32 bg-gray-700 rounded"></canvas>
+                    </div>
+                    
+                    <div id="pivotVisualization" class="mt-4 hidden">
+                        <p class="text-sm text-gray-400 mb-2">Обнаруженные пивоты:</p>
+                        <canvas id="pivotChart" class="w-full h-32 bg-gray-700 rounded"></canvas>
                     </div>
                 </div>
 
@@ -170,8 +201,10 @@
         let ws = null;
         let matches = [];
         let referenceChart = null;
+        let pivotChart = null;
         let isScanning = false;
         let feedbackStats = { relevant: 0, irrelevant: 0 };
+        let currentStructure = null;
 
         const structureTypeLabels = {
             'compression': 'Сжатие',
@@ -389,7 +422,7 @@
                 dot.className = 'w-3 h-3 rounded-full bg-gray-500 mr-2';
                 text.textContent = 'Не сканирует';
                 text.className = 'text-gray-400';
-                startBtn.disabled = !document.getElementById('structureInfo').classList.contains('hidden') === false;
+                startBtn.disabled = currentStructure === null;
                 stopBtn.disabled = true;
             }
         }
@@ -410,7 +443,9 @@
                 }
                 
                 const data = await response.json();
+                currentStructure = data;
                 showStructureInfo(data);
+                loadGallery();
                 
             } catch (error) {
                 alert('Ошибка загрузки графика: ' + error.message);
@@ -420,6 +455,12 @@
         function showStructureInfo(data) {
             const info = document.getElementById('structureInfo');
             info.classList.remove('hidden');
+            
+            if (data.filename) {
+                const img = document.getElementById('uploadedImage');
+                img.src = `/api/uploads/${data.filename}`;
+                img.classList.remove('hidden');
+            }
             
             document.getElementById('structureType').textContent = 
                 structureTypeLabels[data.structure_type] || data.structure_type;
@@ -432,6 +473,11 @@
             document.getElementById('structurePivots').textContent = data.num_pivots;
             
             drawReferenceChart(data.normalized_line);
+            
+            if (data.pivot_points && data.pivot_points.length > 0) {
+                drawPivotChart(data.normalized_line, data.pivot_points);
+                document.getElementById('pivotVisualization').classList.remove('hidden');
+            }
             
             document.getElementById('startBtn').disabled = false;
         }
@@ -466,6 +512,117 @@
                     }
                 }
             });
+        }
+
+        function drawPivotChart(data, pivots) {
+            const ctx = document.getElementById('pivotChart').getContext('2d');
+            
+            if (pivotChart) {
+                pivotChart.destroy();
+            }
+            
+            const pivotData = new Array(data.length).fill(null);
+            const highPivots = [];
+            const lowPivots = [];
+            
+            pivots.forEach(p => {
+                if (p.index < data.length) {
+                    if (p.is_high) {
+                        highPivots.push({ x: p.index, y: data[p.index] });
+                    } else {
+                        lowPivots.push({ x: p.index, y: data[p.index] });
+                    }
+                }
+            });
+            
+            pivotChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map((_, i) => i),
+                    datasets: [
+                        {
+                            data: data,
+                            borderColor: '#6b7280',
+                            borderWidth: 1,
+                            pointRadius: 0,
+                            fill: false,
+                            tension: 0.1
+                        },
+                        {
+                            data: highPivots,
+                            borderColor: 'transparent',
+                            backgroundColor: '#22c55e',
+                            pointRadius: 6,
+                            pointStyle: 'triangle',
+                            showLine: false
+                        },
+                        {
+                            data: lowPivots,
+                            borderColor: 'transparent',
+                            backgroundColor: '#ef4444',
+                            pointRadius: 6,
+                            pointStyle: 'triangle',
+                            rotation: 180,
+                            showLine: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false }
+                    }
+                }
+            });
+        }
+
+        async function loadGallery() {
+            try {
+                const response = await fetch('/api/structures');
+                const data = await response.json();
+                
+                const gallery = document.getElementById('gallery');
+                
+                if (!data.structures || data.structures.length === 0) {
+                    gallery.innerHTML = '<p class="col-span-2 text-gray-500 text-center py-4">Нет загруженных структур</p>';
+                    return;
+                }
+                
+                gallery.innerHTML = data.structures.map(s => `
+                    <div class="gallery-item bg-gray-700 rounded-lg p-2 cursor-pointer ${currentStructure?.structure_id === s.id ? 'ring-2 ring-blue-500' : ''}"
+                         onclick="selectStructure(${s.id})">
+                        <div class="aspect-video bg-gray-600 rounded mb-2 flex items-center justify-center overflow-hidden">
+                            ${s.name && s.name.includes('.') ? 
+                                `<img src="/api/uploads/${s.name}" alt="Структура" class="w-full h-full object-cover">` :
+                                `<canvas id="gallery-chart-${s.id}" class="w-full h-full"></canvas>`
+                            }
+                        </div>
+                        <div class="text-xs">
+                            <span class="px-1.5 py-0.5 rounded ${getTypeColor(s.structure_type)}">${structureTypeLabels[s.structure_type] || s.structure_type}</span>
+                        </div>
+                    </div>
+                `).join('');
+                
+            } catch (error) {
+                console.error('Ошибка загрузки галереи:', error);
+            }
+        }
+
+        async function selectStructure(id) {
+            try {
+                const response = await fetch(`/api/structures/${id}`);
+                const data = await response.json();
+                
+                currentStructure = data;
+                showStructureInfo(data);
+                loadGallery();
+                
+            } catch (error) {
+                console.error('Ошибка выбора структуры:', error);
+            }
         }
 
         async function startScan() {
@@ -511,6 +668,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             connectWebSocket();
+            loadGallery();
             
             const dropzone = document.getElementById('dropzone');
             const fileInput = document.getElementById('fileInput');
@@ -551,6 +709,8 @@
                 matches = [];
                 renderMatches();
             });
+            
+            document.getElementById('refreshGallery').addEventListener('click', loadGallery);
             
             fetch('/api/status').then(r => r.json()).then(data => {
                 updateStatus(data.is_scanning);

@@ -164,6 +164,16 @@ async def upload_chart(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         
+        os.makedirs("uploads", exist_ok=True)
+        
+        import hashlib
+        file_hash = hashlib.md5(contents).hexdigest()[:8]
+        filename = f"{file_hash}_{file.filename or 'chart.png'}"
+        filepath = f"uploads/{filename}"
+        
+        with open(filepath, "wb") as f:
+            f.write(contents)
+        
         price_line = image_processor.extract_price_line(contents)
         
         if len(price_line) < 20:
@@ -175,21 +185,31 @@ async def upload_chart(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Could not extract structure features")
         
         structure_id = await database.save_structure(
-            file.filename or "uploaded_structure",
+            filename,
             features
         )
         
         current_reference = features
         current_structure_id = structure_id
         
+        pivot_points = []
+        for p in features.pivot_points:
+            pivot_points.append({
+                "index": int(p.index),
+                "value": float(p.value),
+                "is_high": p.is_high
+            })
+        
         return {
             "success": True,
             "structure_id": structure_id,
+            "filename": filename,
             "structure_type": features.structure_type.value,
             "trend_direction": float(features.trend_direction),
             "volatility": float(features.volatility),
             "compression_ratio": float(features.compression_ratio),
             "num_pivots": len(features.pivot_points),
+            "pivot_points": pivot_points,
             "normalized_line": features.normalized_line.tolist()
         }
     
@@ -314,6 +334,15 @@ async def submit_feedback(data: FeedbackRequest):
     """Submit feedback for a match."""
     await database.save_feedback(data.match_id, data.is_relevant)
     return {"success": True}
+
+
+@app.get("/api/uploads/{filename}")
+async def get_upload(filename: str):
+    """Serve uploaded image."""
+    filepath = f"uploads/{filename}"
+    if os.path.isfile(filepath):
+        return FileResponse(filepath)
+    raise HTTPException(status_code=404, detail="File not found")
 
 
 @app.get("/api/chart/{symbol}/{timeframe}")
