@@ -219,6 +219,21 @@
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-semibold">Совпадения</h2>
                         <div class="flex items-center gap-4">
+                            <select id="typeFilter" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
+                                <option value="">Все типы</option>
+                                <option value="compression">Сжатие</option>
+                                <option value="accumulation">Накопление</option>
+                                <option value="triangle">Треугольник</option>
+                                <option value="range">Диапазон</option>
+                                <option value="retest">Ретест</option>
+                                <option value="trend_up">Восходящий тренд</option>
+                                <option value="trend_down">Нисходящий тренд</option>
+                            </select>
+                            <select id="sortBy" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
+                                <option value="similarity">По схожести</option>
+                                <option value="time">По времени</option>
+                                <option value="symbol">По паре</option>
+                            </select>
                             <span id="matchCount" class="text-gray-400">0 совпадений</span>
                             <button id="clearMatches" class="text-gray-400 hover:text-white text-sm">
                                 Очистить
@@ -253,6 +268,67 @@
         </div>
     </div>
 
+    <div id="chartModal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50" onclick="closeModal(event)">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-auto" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="modalTitle" class="text-xl font-semibold">BTC/USDT - 1h</h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+                <div class="bg-gray-700/50 rounded p-3">
+                    <span class="text-gray-400">Тип:</span>
+                    <span id="modalType" class="ml-2 font-medium text-blue-400">Треугольник</span>
+                </div>
+                <div class="bg-gray-700/50 rounded p-3">
+                    <span class="text-gray-400">Схожесть:</span>
+                    <span id="modalSimilarity" class="ml-2 font-medium text-green-400">74.5%</span>
+                </div>
+            </div>
+            
+            <div class="mb-4">
+                <p class="text-sm text-gray-400 mb-2">График найденного паттерна:</p>
+                <div class="h-64 bg-gray-700 rounded overflow-hidden">
+                    <canvas id="modalChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <p class="text-sm text-gray-400 mb-2">Эталонный паттерн:</p>
+                    <div class="h-32 bg-gray-700 rounded overflow-hidden">
+                        <canvas id="modalReference"></canvas>
+                    </div>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-400 mb-2">Найденный паттерн:</p>
+                    <div class="h-32 bg-gray-700 rounded overflow-hidden">
+                        <canvas id="modalFound"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-6 flex justify-center gap-4">
+                <button onclick="submitFeedbackFromModal(true)" class="px-6 py-2 bg-green-600 hover:bg-green-700 rounded-lg flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    Релевантно
+                </button>
+                <button onclick="submitFeedbackFromModal(false)" class="px-6 py-2 bg-red-600 hover:bg-red-700 rounded-lg flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                    Нерелевантно
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let ws = null;
         let matches = [];
@@ -261,6 +337,11 @@
         let isScanning = false;
         let feedbackStats = { relevant: 0, irrelevant: 0 };
         let currentStructure = null;
+        let currentModalMatch = null;
+        let modalChart = null;
+        let currentFilter = '';
+        let currentSort = 'similarity';
+        let matchIdCounter = 0;
 
         const structureTypeLabels = {
             'compression': 'Сжатие',
@@ -320,8 +401,14 @@
             );
             
             if (existingIndex >= 0) {
+                const oldMatch = matches[existingIndex];
+                match.local_id = oldMatch.local_id;
+                if (!match.match_id && oldMatch.match_id) {
+                    match.match_id = oldMatch.match_id;
+                }
                 matches[existingIndex] = match;
             } else {
+                match.local_id = ++matchIdCounter;
                 matches.unshift(match);
             }
             
@@ -329,13 +416,36 @@
             renderMatches();
         }
 
+        function getFilteredAndSortedMatches() {
+            let filtered = [...matches];
+            
+            if (currentFilter) {
+                filtered = filtered.filter(m => m.structure_type === currentFilter);
+            }
+            
+            switch (currentSort) {
+                case 'similarity':
+                    filtered.sort((a, b) => b.similarity_score - a.similarity_score);
+                    break;
+                case 'time':
+                    filtered.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                    break;
+                case 'symbol':
+                    filtered.sort((a, b) => a.symbol.localeCompare(b.symbol));
+                    break;
+            }
+            
+            return filtered;
+        }
+
         function renderMatches() {
             const table = document.getElementById('matchesTable');
             const count = document.getElementById('matchCount');
             
-            count.textContent = `${matches.length} совпадений`;
+            const filteredMatches = getFilteredAndSortedMatches();
+            count.textContent = `${filteredMatches.length} совпадений`;
             
-            if (matches.length === 0) {
+            if (filteredMatches.length === 0) {
                 table.innerHTML = `
                     <tr>
                         <td colspan="7" class="py-8 text-center text-gray-500">
@@ -346,8 +456,8 @@
                 return;
             }
             
-            table.innerHTML = matches.map((match, index) => `
-                <tr class="match-row border-b border-gray-700 hover:bg-gray-700/50">
+            table.innerHTML = filteredMatches.map((match, index) => `
+                <tr class="match-row border-b border-gray-700 hover:bg-gray-700/50 cursor-pointer" onclick="openModalById(${match.local_id})">
                     <td class="py-3 pr-4">
                         <span class="font-medium">${match.symbol}</span>
                         ${match.is_mirrored ? '<span class="ml-1 text-xs text-purple-400">(З)</span>' : ''}
@@ -374,14 +484,14 @@
                         ${new Date(match.timestamp).toLocaleTimeString('ru-RU')}
                     </td>
                     <td class="py-3">
-                        <div class="flex gap-1">
-                            <button onclick="submitFeedback(${match.match_id || index}, true)" 
+                        <div class="flex gap-1" onclick="event.stopPropagation()">
+                            <button onclick="submitFeedbackById(${match.local_id}, true)" 
                                     class="p-1 hover:bg-green-600/20 rounded text-green-400" title="Релевантно">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                                 </svg>
                             </button>
-                            <button onclick="submitFeedback(${match.match_id || index}, false)" 
+                            <button onclick="submitFeedbackById(${match.local_id}, false)" 
                                     class="p-1 hover:bg-red-600/20 rounded text-red-400" title="Нерелевантно">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -392,9 +502,158 @@
                 </tr>
             `).join('');
             
-            matches.forEach((match, index) => {
+            filteredMatches.forEach((match, index) => {
                 drawSparkline(`sparkline-${index}`, match.normalized_line);
             });
+        }
+
+        function openModalById(localId) {
+            const match = matches.find(m => m.local_id === localId);
+            if (!match) return;
+            
+            currentModalMatch = match;
+            
+            document.getElementById('modalTitle').textContent = `${match.symbol} - ${match.timeframe}`;
+            document.getElementById('modalType').textContent = structureTypeLabels[match.structure_type] || match.structure_type;
+            document.getElementById('modalSimilarity').textContent = `${match.similarity_score.toFixed(1)}%`;
+            
+            const modal = document.getElementById('chartModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            
+            setTimeout(() => {
+                drawModalChart(match);
+                drawModalComparison(match);
+            }, 50);
+        }
+
+        function closeModal(event) {
+            if (event && event.target && event.target !== document.getElementById('chartModal')) return;
+            const modal = document.getElementById('chartModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            currentModalMatch = null;
+        }
+
+        function drawModalChart(match) {
+            const canvas = document.getElementById('modalChart');
+            if (!canvas || !match.normalized_line) return;
+            
+            const ctx = canvas.getContext('2d');
+            const container = canvas.parentElement;
+            canvas.width = container.offsetWidth;
+            canvas.height = container.offsetHeight;
+            
+            const data = match.normalized_line;
+            const width = canvas.width;
+            const height = canvas.height;
+            const padding = 20;
+            
+            ctx.clearRect(0, 0, width, height);
+            
+            const min = Math.min(...data);
+            const max = Math.max(...data);
+            const range = max - min || 1;
+            
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            data.forEach((val, i) => {
+                const x = padding + (i / (data.length - 1)) * (width - padding * 2);
+                const y = height - padding - ((val - min) / range) * (height - padding * 2);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            
+            ctx.stroke();
+        }
+
+        function drawModalComparison(match) {
+            if (currentStructure && currentStructure.normalized_line) {
+                drawComparisonChart('modalReference', currentStructure.normalized_line, '#10b981');
+            }
+            if (match.normalized_line) {
+                drawComparisonChart('modalFound', match.normalized_line, '#3b82f6');
+            }
+        }
+
+        function drawComparisonChart(canvasId, data, color) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !data) return;
+            
+            const ctx = canvas.getContext('2d');
+            const container = canvas.parentElement;
+            canvas.width = container.offsetWidth;
+            canvas.height = container.offsetHeight;
+            
+            const width = canvas.width;
+            const height = canvas.height;
+            const padding = 10;
+            
+            ctx.clearRect(0, 0, width, height);
+            
+            const min = Math.min(...data);
+            const max = Math.max(...data);
+            const range = max - min || 1;
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            data.forEach((val, i) => {
+                const x = padding + (i / (data.length - 1)) * (width - padding * 2);
+                const y = height - padding - ((val - min) / range) * (height - padding * 2);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            
+            ctx.stroke();
+        }
+
+        async function submitFeedbackFromModal(isRelevant) {
+            if (!currentModalMatch) return;
+            await submitFeedbackById(currentModalMatch.local_id, isRelevant);
+            closeModal();
+        }
+
+        async function submitFeedbackById(localId, isRelevant) {
+            const match = matches.find(m => m.local_id === localId);
+            if (!match) return;
+            
+            const matchId = match.match_id;
+            if (!matchId) {
+                console.warn('Match не имеет ID в базе данных, оценка не будет сохранена');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        match_id: matchId, 
+                        is_relevant: isRelevant,
+                        symbol: match.symbol,
+                        timeframe: match.timeframe
+                    })
+                });
+                
+                if (!response.ok) {
+                    console.error('Ошибка сохранения оценки:', response.status);
+                    return;
+                }
+                
+                if (isRelevant) {
+                    feedbackStats.relevant++;
+                    document.getElementById('relevantCount').textContent = feedbackStats.relevant;
+                } else {
+                    feedbackStats.irrelevant++;
+                    document.getElementById('irrelevantCount').textContent = feedbackStats.irrelevant;
+                }
+            } catch (error) {
+                console.error('Ошибка отправки оценки:', error);
+            }
         }
 
         async function submitFeedback(matchId, isRelevant) {
@@ -814,6 +1073,20 @@
             document.getElementById('clearMatches').addEventListener('click', () => {
                 matches = [];
                 renderMatches();
+            });
+            
+            document.getElementById('typeFilter').addEventListener('change', (e) => {
+                currentFilter = e.target.value;
+                renderMatches();
+            });
+            
+            document.getElementById('sortBy').addEventListener('change', (e) => {
+                currentSort = e.target.value;
+                renderMatches();
+            });
+            
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeModal();
             });
             
             document.getElementById('refreshGallery').addEventListener('click', loadGallery);

@@ -99,12 +99,14 @@ async def on_market_update(symbol: str, timeframe: str):
     )
     
     for match in matches:
+        match_id = None
         if current_structure_id:
-            await database.save_match(current_structure_id, match)
+            match_id = await database.save_match(current_structure_id, match)
         
         await broadcast_message({
             "type": "match",
             "data": {
+                "match_id": match_id,
                 "symbol": match.symbol,
                 "timeframe": match.timeframe,
                 "similarity_score": match.similarity_score,
@@ -139,12 +141,14 @@ async def run_initial_scan():
     matches = similarity_matcher.find_matches(current_reference, structures, scan_threshold)
     
     for match in matches:
+        match_id = None
         if current_structure_id:
-            await database.save_match(current_structure_id, match)
+            match_id = await database.save_match(current_structure_id, match)
         
         await broadcast_message({
             "type": "match",
             "data": {
+                "match_id": match_id,
                 "symbol": match.symbol,
                 "timeframe": match.timeframe,
                 "similarity_score": match.similarity_score,
