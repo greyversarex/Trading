@@ -139,12 +139,16 @@
                     
                     <div class="mt-4">
                         <p class="text-sm text-gray-400 mb-2">Извлечённая структура:</p>
-                        <canvas id="referenceChart" class="w-full h-32 bg-gray-700 rounded"></canvas>
+                        <div class="h-32 bg-gray-700 rounded overflow-hidden">
+                            <canvas id="referenceChart"></canvas>
+                        </div>
                     </div>
                     
                     <div id="pivotVisualization" class="mt-4 hidden">
                         <p class="text-sm text-gray-400 mb-2">Обнаруженные пивоты:</p>
-                        <canvas id="pivotChart" class="w-full h-32 bg-gray-700 rounded"></canvas>
+                        <div class="h-32 bg-gray-700 rounded overflow-hidden">
+                            <canvas id="pivotChart"></canvas>
+                        </div>
                     </div>
                 </div>
 
