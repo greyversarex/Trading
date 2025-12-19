@@ -45,7 +45,7 @@
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div class="lg:col-span-1 space-y-6">
+            <div class="lg:col-span-1 space-y-6 lg:max-h-screen lg:overflow-y-auto lg:sticky lg:top-4">
                 <div class="bg-gray-800 rounded-lg p-6">
                     <h2 class="text-xl font-semibold mb-4">Загрузить График</h2>
                     <div id="dropzone" class="dropzone rounded-lg p-8 text-center cursor-pointer">
@@ -63,7 +63,7 @@
                         <h2 class="text-xl font-semibold">Загруженные Структуры</h2>
                         <button id="refreshGallery" class="text-gray-400 hover:text-white text-sm">Обновить</button>
                     </div>
-                    <div id="gallery" class="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto">
+                    <div id="gallery" class="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto">
                         <p class="col-span-2 text-gray-500 text-center py-4">Нет загруженных структур</p>
                     </div>
                 </div>
@@ -592,12 +592,15 @@
                 }
                 
                 gallery.innerHTML = data.structures.map(s => `
-                    <div class="gallery-item bg-gray-700 rounded-lg p-2 cursor-pointer ${currentStructure?.structure_id === s.id ? 'ring-2 ring-blue-500' : ''}"
+                    <div class="gallery-item bg-gray-700 rounded-lg p-2 cursor-pointer relative ${currentStructure?.structure_id === s.id ? 'ring-2 ring-blue-500' : ''}"
                          onclick="selectStructure(${s.id})">
+                        <button onclick="event.stopPropagation(); deleteStructure(${s.id})" 
+                                class="absolute top-1 right-1 w-5 h-5 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-xs z-10" 
+                                title="Удалить">×</button>
                         <div class="aspect-video bg-gray-600 rounded mb-2 flex items-center justify-center overflow-hidden">
                             ${s.name && s.name.includes('.') ? 
-                                `<img src="/api/uploads/${s.name}" alt="Структура" class="w-full h-full object-cover">` :
-                                `<canvas id="gallery-chart-${s.id}" class="w-full h-full"></canvas>`
+                                `<img src="/api/uploads/${s.name}" alt="Структура" class="w-full h-full object-cover" onerror="this.parentElement.innerHTML='<span class=\\'text-gray-500 text-xs\\'>Нет файла</span>'">` :
+                                `<span class="text-gray-500 text-xs">Нет превью</span>`
                             }
                         </div>
                         <div class="text-xs">
@@ -608,6 +611,24 @@
                 
             } catch (error) {
                 console.error('Ошибка загрузки галереи:', error);
+            }
+        }
+
+        async function deleteStructure(id) {
+            if (!confirm('Удалить эту структуру?')) return;
+            
+            try {
+                await fetch(`/api/structures/${id}`, { method: 'DELETE' });
+                
+                if (currentStructure?.id === id || currentStructure?.structure_id === id) {
+                    currentStructure = null;
+                    document.getElementById('structureInfo').classList.add('hidden');
+                    document.getElementById('startBtn').disabled = true;
+                }
+                
+                loadGallery();
+            } catch (error) {
+                console.error('Ошибка удаления:', error);
             }
         }
 
