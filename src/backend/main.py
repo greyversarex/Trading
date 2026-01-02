@@ -637,11 +637,14 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 async def root():
-    """Serve the main page."""
+    """Serve the main page with anti-cache measures."""
+    import time
     return FileResponse("static/index.html", headers={
-        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
         "Pragma": "no-cache",
-        "Expires": "0"
+        "Expires": "0",
+        "ETag": str(int(time.time())),
+        "Last-Modified": "Thu, 01 Jan 1970 00:00:00 GMT"
     })
 
 

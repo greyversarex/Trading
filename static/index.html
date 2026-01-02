@@ -1270,7 +1270,11 @@
 
         function initManualPivotCanvas() {
             const canvas = document.getElementById('manualPivotCanvas');
-            if (!canvas) return;
+            if (!canvas) {
+                console.error('ОШИБКА: Холст для ручных пивотов не найден!');
+                return;
+            }
+            console.log('Секция ручного создания структуры загружена успешно');
             
             const container = canvas.parentElement;
             canvas.width = container.clientWidth;
