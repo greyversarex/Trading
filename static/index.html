@@ -101,44 +101,19 @@
                     </div>
                 </div>
 
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <h2 class="text-xl font-semibold mb-4">Ручное Создание Структуры</h2>
-                    <p class="text-sm text-gray-400 mb-3">Кликайте на холст чтобы расставить пивоты (максимумы и минимумы)</p>
-                    
-                    <div class="flex gap-2 mb-3">
-                        <button id="pivotHighBtn" onclick="setPivotMode('high')" 
-                                class="flex-1 bg-green-600 hover:bg-green-700 py-2 px-3 rounded text-sm flex items-center justify-center gap-2">
-                            <span class="text-lg">▲</span> Максимум
-                        </button>
-                        <button id="pivotLowBtn" onclick="setPivotMode('low')" 
-                                class="flex-1 bg-gray-700 hover:bg-red-600 py-2 px-3 rounded text-sm flex items-center justify-center gap-2">
-                            <span class="text-lg">▼</span> Минимум
-                        </button>
+                <button onclick="openStructureModal()" 
+                        class="w-full bg-purple-600 hover:bg-purple-700 text-white font-medium py-3 px-4 rounded-lg transition flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Создать Структуру
+                </button>
+
+                <div id="createdStructuresSection" class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4">Созданные Структуры</h2>
+                    <div id="createdStructuresList" class="space-y-2 max-h-48 overflow-y-auto">
+                        <p class="text-gray-500 text-center py-4">Нет созданных структур</p>
                     </div>
-                    
-                    <div class="relative bg-gray-700 rounded-lg overflow-hidden mb-3" style="height: 180px;">
-                        <canvas id="manualPivotCanvas" class="w-full h-full cursor-crosshair"></canvas>
-                        <div id="pivotCount" class="absolute top-2 right-2 bg-gray-800/80 px-2 py-1 rounded text-xs">
-                            Пивотов: <span id="pivotCountNum">0</span>
-                        </div>
-                    </div>
-                    
-                    <div class="flex gap-2">
-                        <button onclick="undoLastPivot()" 
-                                class="flex-1 bg-gray-700 hover:bg-gray-600 py-2 px-3 rounded text-sm">
-                            ↩ Отменить
-                        </button>
-                        <button onclick="clearManualPivots()" 
-                                class="flex-1 bg-gray-700 hover:bg-gray-600 py-2 px-3 rounded text-sm">
-                            ✕ Очистить
-                        </button>
-                    </div>
-                    
-                    <button onclick="saveManualStructure()" 
-                            class="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition disabled:opacity-50"
-                            id="saveManualBtn" disabled>
-                        Сохранить и Сканировать
-                    </button>
                 </div>
 
                 <div id="gallerySection" class="bg-gray-800 rounded-lg p-6">
@@ -375,6 +350,58 @@
         </div>
     </div>
 
+    <div id="structureModal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-xl max-w-lg w-full p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold">Создать Структуру</h3>
+                <button onclick="closeStructureModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            
+            <p class="text-sm text-gray-400 mb-4">Кликайте на холст чтобы расставить пивоты (максимумы и минимумы)</p>
+            
+            <div class="flex gap-2 mb-4">
+                <button id="pivotHighBtn" onclick="setPivotMode('high')" 
+                        class="flex-1 bg-green-600 hover:bg-green-700 py-2 px-3 rounded text-sm flex items-center justify-center gap-2">
+                    <span class="text-lg">▲</span> Максимум
+                </button>
+                <button id="pivotLowBtn" onclick="setPivotMode('low')" 
+                        class="flex-1 bg-gray-700 hover:bg-red-600 py-2 px-3 rounded text-sm flex items-center justify-center gap-2">
+                    <span class="text-lg">▼</span> Минимум
+                </button>
+            </div>
+            
+            <div class="relative bg-gray-700 rounded-lg overflow-hidden mb-4" style="height: 200px;">
+                <canvas id="manualPivotCanvas" class="w-full h-full cursor-crosshair"></canvas>
+                <div class="absolute top-2 right-2 bg-gray-800/80 px-2 py-1 rounded text-xs">
+                    Пивотов: <span id="pivotCountNum">0</span>
+                </div>
+            </div>
+            
+            <div class="flex gap-2 mb-4">
+                <button onclick="undoLastPivot()" 
+                        class="flex-1 bg-gray-700 hover:bg-gray-600 py-2 px-3 rounded text-sm">
+                    ↩ Отменить
+                </button>
+                <button onclick="clearManualPivots()" 
+                        class="flex-1 bg-gray-700 hover:bg-gray-600 py-2 px-3 rounded text-sm">
+                    ✕ Очистить
+                </button>
+            </div>
+            
+            <div class="mb-4">
+                <label class="text-sm text-gray-400 mb-1 block">Название структуры:</label>
+                <input type="text" id="structureName" placeholder="Моя структура" 
+                       class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+            </div>
+            
+            <button onclick="saveManualStructure()" 
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition disabled:opacity-50"
+                    id="saveManualBtn" disabled>
+                Сохранить и Сканировать
+            </button>
+        </div>
+    </div>
+
     <script>
         let ws = null;
         let matches = [];
@@ -392,6 +419,7 @@
         let manualPivots = [];
         let pivotMode = 'high';
         let manualCanvasCtx = null;
+        let createdStructures = [];
 
         const structureTypeLabels = {
             'compression': 'Сжатие',
@@ -1405,6 +1433,109 @@
             document.getElementById('saveManualBtn').disabled = manualPivots.length < 3;
         }
         
+        function openStructureModal() {
+            const modal = document.getElementById('structureModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            clearManualPivots();
+            document.getElementById('structureName').value = '';
+            setTimeout(initManualPivotCanvas, 50);
+        }
+        
+        function closeStructureModal() {
+            const modal = document.getElementById('structureModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+        
+        function renderCreatedStructures() {
+            const list = document.getElementById('createdStructuresList');
+            if (createdStructures.length === 0) {
+                list.innerHTML = '<p class="text-gray-500 text-center py-4">Нет созданных структур</p>';
+                return;
+            }
+            
+            list.innerHTML = createdStructures.map((s, i) => `
+                <div class="flex items-center justify-between bg-gray-700 rounded-lg p-3 cursor-pointer hover:bg-gray-600 transition"
+                     onclick="selectCreatedStructure(${i})">
+                    <div class="flex items-center gap-3">
+                        <div class="w-16 h-10 bg-gray-600 rounded overflow-hidden">
+                            <canvas id="structurePreview${i}" width="64" height="40"></canvas>
+                        </div>
+                        <div>
+                            <div class="font-medium text-sm">${s.name}</div>
+                            <div class="text-xs text-gray-400">${s.pivots.length} пивотов</div>
+                        </div>
+                    </div>
+                    <button onclick="event.stopPropagation(); deleteCreatedStructure(${i})" 
+                            class="text-gray-400 hover:text-red-500 p-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            `).join('');
+            
+            setTimeout(() => {
+                createdStructures.forEach((s, i) => drawStructurePreview(i, s.pivots));
+            }, 10);
+        }
+        
+        function drawStructurePreview(index, pivots) {
+            const canvas = document.getElementById(`structurePreview${index}`);
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            ctx.fillStyle = '#374151';
+            ctx.fillRect(0, 0, w, h);
+            
+            if (pivots.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#60a5fa';
+                ctx.lineWidth = 1.5;
+                pivots.forEach((p, i) => {
+                    const px = p.x * w;
+                    const py = (1 - p.y) * h;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                });
+                ctx.stroke();
+            }
+        }
+        
+        function deleteCreatedStructure(index) {
+            createdStructures.splice(index, 1);
+            renderCreatedStructures();
+        }
+        
+        async function selectCreatedStructure(index) {
+            const s = createdStructures[index];
+            try {
+                const response = await fetch('/api/manual-structure', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pivots: s.pivots })
+                });
+                
+                if (!response.ok) throw new Error('Ошибка');
+                
+                const data = await response.json();
+                currentStructure = data;
+                currentStructure.searchMode = 'manual';
+                
+                showStructureInfo(data);
+                matches = [];
+                matchIdCounter = 0;
+                renderMatches();
+                
+                await startScanWithMode('manual', null, data.structure_id);
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        }
+        
         async function saveManualStructure() {
             if (manualPivots.length < 3) {
                 alert('Добавьте минимум 3 точки');
@@ -1427,6 +1558,16 @@
                 currentStructure = data;
                 currentStructure.searchMode = 'manual';
                 
+                const structureName = document.getElementById('structureName').value.trim() || 
+                                      `Структура ${createdStructures.length + 1}`;
+                createdStructures.push({
+                    name: structureName,
+                    pivots: [...manualPivots],
+                    structure_id: data.structure_id
+                });
+                renderCreatedStructures();
+                closeStructureModal();
+                
                 showStructureInfo(data);
                 
                 matches = [];
@@ -1443,11 +1584,10 @@
         document.addEventListener('DOMContentLoaded', () => {
             connectWebSocket();
             loadGallery();
-            initManualPivotCanvas();
             
             window.addEventListener('resize', () => {
                 const canvas = document.getElementById('manualPivotCanvas');
-                if (canvas) {
+                if (canvas && !document.getElementById('structureModal').classList.contains('hidden')) {
                     const container = canvas.parentElement;
                     canvas.width = container.clientWidth;
                     canvas.height = container.clientHeight;
