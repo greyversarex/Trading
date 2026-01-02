@@ -58,9 +58,19 @@ class PresetRequest(BaseModel):
 
 
 class StartScanRequest(BaseModel):
-    mode: str = "preset"  # "preset" or "uploaded"
+    mode: str = "preset"  # "preset", "uploaded", or "manual"
     pattern_type: Optional[str] = None  # For preset: triangle_up, triangle_down, trend_up, trend_down, range, compression
-    structure_id: Optional[int] = None  # For uploaded: ID of saved structure
+    structure_id: Optional[int] = None  # For uploaded/manual: ID of saved structure
+
+
+class ManualPivot(BaseModel):
+    x: float
+    y: float
+    isHigh: bool
+
+
+class ManualStructureRequest(BaseModel):
+    pivots: List[ManualPivot]
 
 
 @app.on_event("startup")
@@ -339,6 +349,79 @@ async def select_preset(data: PresetRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/manual-structure")
+async def create_manual_structure(data: ManualStructureRequest):
+    """Create a structure from manually placed pivot points."""
+    global current_reference, current_structure_id
+    
+    try:
+        if len(data.pivots) < 3:
+            raise HTTPException(status_code=400, detail="Need at least 3 pivot points")
+        
+        sorted_pivots = sorted(data.pivots, key=lambda p: p.x)
+        
+        points = 100
+        x_positions = np.linspace(0, 1, points)
+        price_line = np.zeros(points)
+        
+        pivot_indices = []
+        for p in sorted_pivots:
+            idx = int(p.x * (points - 1))
+            idx = max(0, min(points - 1, idx))
+            pivot_indices.append((idx, p.y, p.isHigh))
+        
+        for i in range(len(pivot_indices) - 1):
+            start_idx, start_y, _ = pivot_indices[i]
+            end_idx, end_y, _ = pivot_indices[i + 1]
+            
+            if end_idx > start_idx:
+                for j in range(start_idx, end_idx + 1):
+                    t = (j - start_idx) / (end_idx - start_idx)
+                    price_line[j] = start_y + t * (end_y - start_y)
+        
+        if pivot_indices[0][0] > 0:
+            for j in range(0, pivot_indices[0][0]):
+                price_line[j] = pivot_indices[0][1]
+        
+        if pivot_indices[-1][0] < points - 1:
+            for j in range(pivot_indices[-1][0], points):
+                price_line[j] = pivot_indices[-1][1]
+        
+        features = structure_extractor.extract_features(price_line)
+        
+        if features is None:
+            raise HTTPException(status_code=400, detail="Could not extract structure features")
+        
+        current_reference = features
+        current_structure_id = None
+        
+        pivot_points = []
+        for p in features.pivot_points:
+            pivot_points.append({
+                "index": int(p.index),
+                "value": float(p.value),
+                "is_high": p.is_high
+            })
+        
+        return {
+            "success": True,
+            "structure_id": None,
+            "preset_name": "Ручная структура",
+            "structure_type": features.structure_type.value,
+            "trend_direction": float(features.trend_direction),
+            "volatility": float(features.volatility),
+            "compression_ratio": float(features.compression_ratio),
+            "num_pivots": len(features.pivot_points),
+            "pivot_points": pivot_points,
+            "normalized_line": features.normalized_line.tolist()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
@@ -375,8 +458,11 @@ async def start_scan(data: Optional[StartScanRequest] = None):
             features_dict = json.loads(structure["features"]) if isinstance(structure["features"], str) else structure["features"]
             current_reference = structure_extractor.features_from_dict(features_dict)
             current_structure_id = data.structure_id
+    elif data.mode == "manual":
+        if current_reference is None:
+            raise HTTPException(status_code=400, detail="No manual structure created. Create one first.")
     else:
-        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset' or 'uploaded'")
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', or 'manual'")
     
     if is_scanning:
         await stop_scan()

@@ -101,6 +101,46 @@
                     </div>
                 </div>
 
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4">Ручное Создание Структуры</h2>
+                    <p class="text-sm text-gray-400 mb-3">Кликайте на холст чтобы расставить пивоты (максимумы и минимумы)</p>
+                    
+                    <div class="flex gap-2 mb-3">
+                        <button id="pivotHighBtn" onclick="setPivotMode('high')" 
+                                class="flex-1 bg-green-600 hover:bg-green-700 py-2 px-3 rounded text-sm flex items-center justify-center gap-2">
+                            <span class="text-lg">▲</span> Максимум
+                        </button>
+                        <button id="pivotLowBtn" onclick="setPivotMode('low')" 
+                                class="flex-1 bg-gray-700 hover:bg-red-600 py-2 px-3 rounded text-sm flex items-center justify-center gap-2">
+                            <span class="text-lg">▼</span> Минимум
+                        </button>
+                    </div>
+                    
+                    <div class="relative bg-gray-700 rounded-lg overflow-hidden mb-3" style="height: 180px;">
+                        <canvas id="manualPivotCanvas" class="w-full h-full cursor-crosshair"></canvas>
+                        <div id="pivotCount" class="absolute top-2 right-2 bg-gray-800/80 px-2 py-1 rounded text-xs">
+                            Пивотов: <span id="pivotCountNum">0</span>
+                        </div>
+                    </div>
+                    
+                    <div class="flex gap-2">
+                        <button onclick="undoLastPivot()" 
+                                class="flex-1 bg-gray-700 hover:bg-gray-600 py-2 px-3 rounded text-sm">
+                            ↩ Отменить
+                        </button>
+                        <button onclick="clearManualPivots()" 
+                                class="flex-1 bg-gray-700 hover:bg-gray-600 py-2 px-3 rounded text-sm">
+                            ✕ Очистить
+                        </button>
+                    </div>
+                    
+                    <button onclick="saveManualStructure()" 
+                            class="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition disabled:opacity-50"
+                            id="saveManualBtn" disabled>
+                        Сохранить и Сканировать
+                    </button>
+                </div>
+
                 <div id="gallerySection" class="bg-gray-800 rounded-lg p-6">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-semibold">Загруженные Структуры</h2>
@@ -348,6 +388,10 @@
         let currentFilter = '';
         let currentSort = 'similarity';
         let matchIdCounter = 0;
+        
+        let manualPivots = [];
+        let pivotMode = 'high';
+        let manualCanvasCtx = null;
 
         const structureTypeLabels = {
             'compression': 'Сжатие',
@@ -1224,9 +1268,188 @@
             }
         }
 
+        function initManualPivotCanvas() {
+            const canvas = document.getElementById('manualPivotCanvas');
+            if (!canvas) return;
+            
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            manualCanvasCtx = canvas.getContext('2d');
+            
+            canvas.addEventListener('click', handleCanvasClick);
+            drawManualPivots();
+        }
+        
+        function handleCanvasClick(e) {
+            const canvas = e.target;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const relX = x / canvas.width;
+            const relY = 1 - (y / canvas.height);
+            
+            manualPivots.push({
+                x: relX,
+                y: relY,
+                isHigh: pivotMode === 'high'
+            });
+            
+            manualPivots.sort((a, b) => a.x - b.x);
+            
+            drawManualPivots();
+            updatePivotCount();
+        }
+        
+        function drawManualPivots() {
+            const canvas = document.getElementById('manualPivotCanvas');
+            if (!canvas || !manualCanvasCtx) return;
+            
+            const ctx = manualCanvasCtx;
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            ctx.clearRect(0, 0, w, h);
+            
+            ctx.strokeStyle = '#374151';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = (h / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+                ctx.stroke();
+            }
+            
+            if (manualPivots.length === 0) {
+                ctx.fillStyle = '#6b7280';
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Кликните чтобы добавить точку', w / 2, h / 2);
+                return;
+            }
+            
+            if (manualPivots.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#6b7280';
+                ctx.lineWidth = 2;
+                
+                manualPivots.forEach((p, i) => {
+                    const px = p.x * w;
+                    const py = (1 - p.y) * h;
+                    if (i === 0) {
+                        ctx.moveTo(px, py);
+                    } else {
+                        ctx.lineTo(px, py);
+                    }
+                });
+                ctx.stroke();
+            }
+            
+            manualPivots.forEach((p, i) => {
+                const px = p.x * w;
+                const py = (1 - p.y) * h;
+                
+                ctx.beginPath();
+                if (p.isHigh) {
+                    ctx.fillStyle = '#22c55e';
+                    ctx.moveTo(px, py - 10);
+                    ctx.lineTo(px - 8, py + 5);
+                    ctx.lineTo(px + 8, py + 5);
+                } else {
+                    ctx.fillStyle = '#ef4444';
+                    ctx.moveTo(px, py + 10);
+                    ctx.lineTo(px - 8, py - 5);
+                    ctx.lineTo(px + 8, py - 5);
+                }
+                ctx.closePath();
+                ctx.fill();
+            });
+        }
+        
+        function setPivotMode(mode) {
+            pivotMode = mode;
+            const highBtn = document.getElementById('pivotHighBtn');
+            const lowBtn = document.getElementById('pivotLowBtn');
+            
+            if (mode === 'high') {
+                highBtn.className = 'flex-1 bg-green-600 hover:bg-green-700 py-2 px-3 rounded text-sm flex items-center justify-center gap-2';
+                lowBtn.className = 'flex-1 bg-gray-700 hover:bg-red-600 py-2 px-3 rounded text-sm flex items-center justify-center gap-2';
+            } else {
+                highBtn.className = 'flex-1 bg-gray-700 hover:bg-green-600 py-2 px-3 rounded text-sm flex items-center justify-center gap-2';
+                lowBtn.className = 'flex-1 bg-red-600 hover:bg-red-700 py-2 px-3 rounded text-sm flex items-center justify-center gap-2';
+            }
+        }
+        
+        function undoLastPivot() {
+            if (manualPivots.length > 0) {
+                manualPivots.pop();
+                drawManualPivots();
+                updatePivotCount();
+            }
+        }
+        
+        function clearManualPivots() {
+            manualPivots = [];
+            drawManualPivots();
+            updatePivotCount();
+        }
+        
+        function updatePivotCount() {
+            document.getElementById('pivotCountNum').textContent = manualPivots.length;
+            document.getElementById('saveManualBtn').disabled = manualPivots.length < 3;
+        }
+        
+        async function saveManualStructure() {
+            if (manualPivots.length < 3) {
+                alert('Добавьте минимум 3 точки');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/manual-structure', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pivots: manualPivots })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Ошибка');
+                }
+                
+                const data = await response.json();
+                currentStructure = data;
+                currentStructure.searchMode = 'manual';
+                
+                showStructureInfo(data);
+                
+                matches = [];
+                matchIdCounter = 0;
+                renderMatches();
+                
+                await startScanWithMode('manual', null, data.structure_id);
+                
+            } catch (error) {
+                alert('Ошибка сохранения структуры: ' + error.message);
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             connectWebSocket();
             loadGallery();
+            initManualPivotCanvas();
+            
+            window.addEventListener('resize', () => {
+                const canvas = document.getElementById('manualPivotCanvas');
+                if (canvas) {
+                    const container = canvas.parentElement;
+                    canvas.width = container.clientWidth;
+                    canvas.height = container.clientHeight;
+                    drawManualPivots();
+                }
+            });
             
             const dropzone = document.getElementById('dropzone');
             const fileInput = document.getElementById('fileInput');
