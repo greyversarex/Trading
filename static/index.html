@@ -547,13 +547,20 @@
             
             const ctx = canvas.getContext('2d');
             const container = canvas.parentElement;
-            canvas.width = container.offsetWidth;
-            canvas.height = container.offsetHeight;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = container.offsetWidth * dpr;
+            canvas.height = container.offsetHeight * dpr;
+            canvas.style.width = container.offsetWidth + 'px';
+            canvas.style.height = container.offsetHeight + 'px';
+            ctx.scale(dpr, dpr);
             
             const data = match.normalized_line;
-            const width = canvas.width;
-            const height = canvas.height;
-            const padding = 20;
+            const width = container.offsetWidth;
+            const height = container.offsetHeight;
+            const paddingLeft = 50;
+            const paddingRight = 20;
+            const paddingTop = 20;
+            const paddingBottom = 30;
             
             ctx.clearRect(0, 0, width, height);
             
@@ -561,18 +568,93 @@
             const max = Math.max(...data);
             const range = max - min || 1;
             
+            ctx.strokeStyle = 'rgba(75, 85, 99, 0.3)';
+            ctx.lineWidth = 1;
+            const gridLines = 5;
+            for (let i = 0; i <= gridLines; i++) {
+                const y = paddingTop + (i / gridLines) * (height - paddingTop - paddingBottom);
+                ctx.beginPath();
+                ctx.moveTo(paddingLeft, y);
+                ctx.lineTo(width - paddingRight, y);
+                ctx.stroke();
+                
+                const value = max - (i / gridLines) * range;
+                ctx.fillStyle = '#9ca3af';
+                ctx.font = '11px sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(value.toFixed(3), paddingLeft - 8, y + 4);
+            }
+            
+            const xLabels = 6;
+            ctx.textAlign = 'center';
+            for (let i = 0; i <= xLabels; i++) {
+                const x = paddingLeft + (i / xLabels) * (width - paddingLeft - paddingRight);
+                const idx = Math.round((i / xLabels) * (data.length - 1));
+                ctx.fillStyle = '#6b7280';
+                ctx.fillText(idx.toString(), x, height - 10);
+            }
+            
+            const gradient = ctx.createLinearGradient(0, paddingTop, 0, height - paddingBottom);
+            gradient.addColorStop(0, 'rgba(59, 130, 246, 0.3)');
+            gradient.addColorStop(1, 'rgba(59, 130, 246, 0.02)');
+            
+            ctx.beginPath();
+            data.forEach((val, i) => {
+                const x = paddingLeft + (i / (data.length - 1)) * (width - paddingLeft - paddingRight);
+                const y = height - paddingBottom - ((val - min) / range) * (height - paddingTop - paddingBottom);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            const lastX = paddingLeft + (width - paddingLeft - paddingRight);
+            ctx.lineTo(lastX, height - paddingBottom);
+            ctx.lineTo(paddingLeft, height - paddingBottom);
+            ctx.closePath();
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            
+            ctx.shadowColor = 'rgba(59, 130, 246, 0.5)';
+            ctx.shadowBlur = 4;
             ctx.strokeStyle = '#3b82f6';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
             ctx.beginPath();
             
             data.forEach((val, i) => {
-                const x = padding + (i / (data.length - 1)) * (width - padding * 2);
-                const y = height - padding - ((val - min) / range) * (height - padding * 2);
+                const x = paddingLeft + (i / (data.length - 1)) * (width - paddingLeft - paddingRight);
+                const y = height - paddingBottom - ((val - min) / range) * (height - paddingTop - paddingBottom);
                 if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             });
             
             ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            let highIdx = 0, lowIdx = 0;
+            data.forEach((val, i) => {
+                if (val > data[highIdx]) highIdx = i;
+                if (val < data[lowIdx]) lowIdx = i;
+            });
+            
+            const highX = paddingLeft + (highIdx / (data.length - 1)) * (width - paddingLeft - paddingRight);
+            const highY = height - paddingBottom - ((data[highIdx] - min) / range) * (height - paddingTop - paddingBottom);
+            ctx.fillStyle = '#22c55e';
+            ctx.beginPath();
+            ctx.arc(highX, highY, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#22c55e';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('MAX', highX, highY - 10);
+            
+            const lowX = paddingLeft + (lowIdx / (data.length - 1)) * (width - paddingLeft - paddingRight);
+            const lowY = height - paddingBottom - ((data[lowIdx] - min) / range) * (height - paddingTop - paddingBottom);
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(lowX, lowY, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ef4444';
+            ctx.fillText('MIN', lowX, lowY + 16);
         }
 
         function drawModalComparison(match) {
@@ -590,12 +672,16 @@
             
             const ctx = canvas.getContext('2d');
             const container = canvas.parentElement;
-            canvas.width = container.offsetWidth;
-            canvas.height = container.offsetHeight;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = container.offsetWidth * dpr;
+            canvas.height = container.offsetHeight * dpr;
+            canvas.style.width = container.offsetWidth + 'px';
+            canvas.style.height = container.offsetHeight + 'px';
+            ctx.scale(dpr, dpr);
             
-            const width = canvas.width;
-            const height = canvas.height;
-            const padding = 10;
+            const width = container.offsetWidth;
+            const height = container.offsetHeight;
+            const padding = 15;
             
             ctx.clearRect(0, 0, width, height);
             
@@ -603,8 +689,40 @@
             const max = Math.max(...data);
             const range = max - min || 1;
             
+            ctx.strokeStyle = 'rgba(75, 85, 99, 0.2)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 3; i++) {
+                const y = padding + (i / 3) * (height - padding * 2);
+                ctx.beginPath();
+                ctx.moveTo(padding, y);
+                ctx.lineTo(width - padding, y);
+                ctx.stroke();
+            }
+            
+            const gradient = ctx.createLinearGradient(0, padding, 0, height - padding);
+            const colorRgb = color === '#10b981' ? '16, 185, 129' : '59, 130, 246';
+            gradient.addColorStop(0, `rgba(${colorRgb}, 0.25)`);
+            gradient.addColorStop(1, `rgba(${colorRgb}, 0.02)`);
+            
+            ctx.beginPath();
+            data.forEach((val, i) => {
+                const x = padding + (i / (data.length - 1)) * (width - padding * 2);
+                const y = height - padding - ((val - min) / range) * (height - padding * 2);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.lineTo(width - padding, height - padding);
+            ctx.lineTo(padding, height - padding);
+            ctx.closePath();
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            
+            ctx.shadowColor = color === '#10b981' ? 'rgba(16, 185, 129, 0.5)' : 'rgba(59, 130, 246, 0.5)';
+            ctx.shadowBlur = 3;
             ctx.strokeStyle = color;
             ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
             ctx.beginPath();
             
             data.forEach((val, i) => {
@@ -615,6 +733,7 @@
             });
             
             ctx.stroke();
+            ctx.shadowBlur = 0;
         }
 
         async function submitFeedbackFromModal(isRelevant) {
