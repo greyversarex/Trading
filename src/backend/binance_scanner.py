@@ -28,15 +28,15 @@ class SymbolData:
 
 
 class BinanceScanner:
-    """Scans crypto market for price structures using CryptoCompare API."""
+    """Scans crypto market for price structures using Binance API."""
     
     TIMEFRAMES = {
-        "1m": "histominute",
-        "5m": "histominute",
-        "15m": "histominute",
-        "1h": "histohour",
-        "4h": "histohour",
-        "1d": "histoday",
+        "1m": "1m",
+        "5m": "5m",
+        "15m": "15m",
+        "1h": "1h",
+        "4h": "4h",
+        "1d": "1d",
     }
     
     TIMEFRAME_LIMITS = {
@@ -48,17 +48,8 @@ class BinanceScanner:
         "1d": 100,
     }
     
-    TIMEFRAME_AGGREGATE = {
-        "1m": 1,
-        "5m": 5,
-        "15m": 15,
-        "1h": 1,
-        "4h": 4,
-        "1d": 1,
-    }
-    
-    BASE_URL = "https://min-api.cryptocompare.com/data/v2"
-    working_endpoint: str = "https://min-api.cryptocompare.com"
+    BASE_URL = "https://api.binance.com/api/v3"
+    working_endpoint: str = "https://api.binance.com"
     data_available: bool = False
     last_error: str = None
     
@@ -73,37 +64,31 @@ class BinanceScanner:
         self._poll_task: Optional[asyncio.Task] = None
     
     async def fetch_top_symbols(self) -> List[str]:
-        """Fetch top crypto symbols by volume from CryptoCompare."""
-        url = "https://min-api.cryptocompare.com/data/top/totalvolfull"
-        params = {
-            "limit": self.num_symbols,
-            "tsym": "USD"
-        }
+        """Fetch top crypto symbols by volume from Binance."""
+        url = f"{self.BASE_URL}/ticker/24hr"
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status != 200:
                         print(f"Error fetching symbols: {response.status}")
                         return self._get_default_symbols()
                     
                     data = await response.json()
                     
-                    if data.get("Response") == "Error":
-                        print(f"CryptoCompare error: {data.get('Message')}")
-                        return self._get_default_symbols()
+                    usdt_pairs = [
+                        item for item in data 
+                        if item['symbol'].endswith('USDT') and float(item.get('quoteVolume', 0)) > 0
+                    ]
+                    
+                    usdt_pairs.sort(key=lambda x: float(x.get('quoteVolume', 0)), reverse=True)
+                    
+                    symbols = [item['symbol'] for item in usdt_pairs[:self.num_symbols]]
                     
                     self.data_available = True
-                    self.working_endpoint = "https://min-api.cryptocompare.com"
+                    self.working_endpoint = "https://api.binance.com"
                     
-                    symbols = []
-                    for item in data.get("Data", []):
-                        coin_info = item.get("CoinInfo", {})
-                        symbol = coin_info.get("Name")
-                        if symbol:
-                            symbols.append(symbol)
-                    
-                    print(f"Got {len(symbols)} symbols from CryptoCompare")
+                    print(f"Got {len(symbols)} symbols from Binance")
                     return symbols if symbols else self._get_default_symbols()
                     
         except Exception as e:
@@ -114,23 +99,21 @@ class BinanceScanner:
     def _get_default_symbols(self) -> List[str]:
         """Return default symbols if API fails."""
         return [
-            "BTC", "ETH", "BNB", "SOL", "XRP",
-            "ADA", "DOGE", "AVAX", "DOT", "MATIC",
-            "LINK", "LTC", "ATOM", "UNI", "XLM",
-            "TRX", "NEAR", "APT", "FIL", "ARB"
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+            "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT",
+            "LINKUSDT", "LTCUSDT", "ATOMUSDT", "UNIUSDT", "XLMUSDT",
+            "TRXUSDT", "NEARUSDT", "APTUSDT", "FILUSDT", "ARBUSDT"
         ]
     
     async def fetch_candles(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
-        """Fetch candle data from CryptoCompare API."""
-        endpoint = self.TIMEFRAMES.get(interval, "histominute")
-        aggregate = self.TIMEFRAME_AGGREGATE.get(interval, 1)
+        """Fetch candle data from Binance API."""
+        binance_interval = self.TIMEFRAMES.get(interval, "1m")
         
-        url = f"{self.BASE_URL}/{endpoint}"
+        url = f"{self.BASE_URL}/klines"
         params = {
-            "fsym": symbol,
-            "tsym": "USD",
-            "limit": limit,
-            "aggregate": aggregate
+            "symbol": symbol,
+            "interval": binance_interval,
+            "limit": limit
         }
         
         try:
@@ -141,19 +124,16 @@ class BinanceScanner:
                     
                     data = await response.json()
                     
-                    if data.get("Response") == "Error":
-                        return []
-                    
                     candles = []
-                    for item in data.get("Data", {}).get("Data", []):
+                    for item in data:
                         candles.append(CandleData(
-                            open_time=item["time"] * 1000,
-                            open=float(item["open"]),
-                            high=float(item["high"]),
-                            low=float(item["low"]),
-                            close=float(item["close"]),
-                            volume=float(item.get("volumefrom", 0)),
-                            close_time=item["time"] * 1000
+                            open_time=int(item[0]),
+                            open=float(item[1]),
+                            high=float(item[2]),
+                            low=float(item[3]),
+                            close=float(item[4]),
+                            volume=float(item[5]),
+                            close_time=int(item[6])
                         ))
                     
                     if candles:
@@ -188,7 +168,7 @@ class BinanceScanner:
 
     async def initialize_symbols(self):
         """Initialize symbol list and fetch initial candle data."""
-        print("Fetching top symbols...")
+        print("Fetching top symbols from Binance...")
         self.symbols = await self.fetch_top_symbols()
         print(f"Got {len(self.symbols)} symbols")
         
@@ -216,7 +196,7 @@ class BinanceScanner:
                     tasks.append(self._update_symbol_candles(symbol, timeframe))
             
             await asyncio.gather(*tasks, return_exceptions=True)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
     
     async def _update_symbol_candles(self, symbol: str, timeframe: str):
         """Update candles for a specific symbol/timeframe."""
