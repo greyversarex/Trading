@@ -36,6 +36,15 @@ class SimilarityMatcher:
         line_section = len(features.normalized_line)
         mirrored_feature_vector[:line_section] = (1.0 - features.normalized_line) * 0.4
         
+        mirrored_type = features.structure_type
+        type_mirror_map = {
+            StructureType.IMPULSE_UP: StructureType.IMPULSE_DOWN,
+            StructureType.IMPULSE_DOWN: StructureType.IMPULSE_UP,
+            StructureType.TREND_UP: StructureType.TREND_DOWN,
+            StructureType.TREND_DOWN: StructureType.TREND_UP,
+        }
+        mirrored_type = type_mirror_map.get(features.structure_type, features.structure_type)
+        
         return StructureFeatures(
             pivot_points=features.pivot_points,
             normalized_line=mirrored_line,
@@ -44,7 +53,7 @@ class SimilarityMatcher:
             trend_direction=-features.trend_direction,
             volatility=features.volatility,
             compression_ratio=features.compression_ratio,
-            structure_type=features.structure_type,
+            structure_type=mirrored_type,
             feature_vector=mirrored_feature_vector
         )
     

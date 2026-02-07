@@ -14,6 +14,9 @@ class StructureType(str, Enum):
     RETEST = "retest"
     TREND_UP = "trend_up"
     TREND_DOWN = "trend_down"
+    IMPULSE_UP = "impulse_up"
+    IMPULSE_DOWN = "impulse_down"
+    BREAKOUT = "breakout"
     UNKNOWN = "unknown"
 
 
@@ -66,7 +69,6 @@ class StructureExtractor:
         self.resample_points = resample_points
     
     def normalize_line(self, line: np.ndarray) -> np.ndarray:
-        """Normalize line to be scale-invariant and volatility-invariant."""
         if len(line) == 0:
             return np.array([])
         
@@ -85,12 +87,14 @@ class StructureExtractor:
         
         return normalized
     
-    def detect_pivots(self, line: np.ndarray, order: int = 5) -> List[PivotPoint]:
-        """Detect pivot points (local highs and lows) in the price line."""
-        if len(line) < order * 2 + 1:
+    def detect_pivots(self, line: np.ndarray, order: int = None) -> List[PivotPoint]:
+        if len(line) < 11:
             return []
         
-        window_length = min(11, len(line) - 1)
+        if order is None:
+            order = self._adaptive_order(line)
+        
+        window_length = min(7, len(line) - 1)
         if window_length % 2 == 0:
             window_length -= 1
         if window_length >= 3:
@@ -98,42 +102,159 @@ class StructureExtractor:
         else:
             smoothed = line
         
-        highs = argrelextrema(smoothed, np.greater, order=order)[0]
-        lows = argrelextrema(smoothed, np.less, order=order)[0]
+        pivots = self._multi_scale_pivots(smoothed, line, adaptive_order=order)
         
-        pivots = []
+        if len(pivots) < 3:
+            pivots = self._fallback_pivots(line)
         
-        for idx in highs:
-            pivots.append(PivotPoint(
-                index=idx,
-                value=line[idx],
-                is_high=True,
-                relative_position=idx / len(line)
-            ))
-        
-        for idx in lows:
-            pivots.append(PivotPoint(
-                index=idx,
-                value=line[idx],
-                is_high=False,
-                relative_position=idx / len(line)
-            ))
-        
-        pivots.sort(key=lambda p: p.index)
+        pivots = self._filter_redundant_pivots(pivots, line)
         
         if len(pivots) > self.num_pivots:
-            scores = []
-            for p in pivots:
-                prominence = abs(p.value - np.mean(line))
-                scores.append((prominence, p))
-            scores.sort(reverse=True)
-            pivots = [s[1] for s in scores[:self.num_pivots]]
-            pivots.sort(key=lambda p: p.index)
+            pivots = self._select_important_pivots(pivots, line)
         
         return pivots
     
+    def _adaptive_order(self, line: np.ndarray) -> int:
+        diffs = np.abs(np.diff(line))
+        mean_diff = np.mean(diffs)
+        max_diff = np.max(diffs)
+        
+        if max_diff > mean_diff * 8:
+            return 2
+        elif max_diff > mean_diff * 4:
+            return 3
+        else:
+            return max(3, min(5, len(line) // 20))
+    
+    def _multi_scale_pivots(self, smoothed: np.ndarray, original: np.ndarray, adaptive_order: int = 3) -> List[PivotPoint]:
+        all_pivots = []
+        seen_indices = set()
+        
+        base_orders = [2, 3, 5]
+        if adaptive_order not in base_orders:
+            base_orders.append(adaptive_order)
+            base_orders.sort()
+        orders = base_orders
+        
+        for order in orders:
+            if len(smoothed) < order * 2 + 1:
+                continue
+            
+            highs = argrelextrema(smoothed, np.greater, order=order)[0]
+            lows = argrelextrema(smoothed, np.less, order=order)[0]
+            
+            for idx in highs:
+                if not any(abs(idx - s) <= 2 for s in seen_indices):
+                    all_pivots.append(PivotPoint(
+                        index=idx,
+                        value=original[idx],
+                        is_high=True,
+                        relative_position=idx / len(original)
+                    ))
+                    seen_indices.add(idx)
+            
+            for idx in lows:
+                if not any(abs(idx - s) <= 2 for s in seen_indices):
+                    all_pivots.append(PivotPoint(
+                        index=idx,
+                        value=original[idx],
+                        is_high=False,
+                        relative_position=idx / len(original)
+                    ))
+                    seen_indices.add(idx)
+        
+        all_pivots.sort(key=lambda p: p.index)
+        return all_pivots
+    
+    def _fallback_pivots(self, line: np.ndarray) -> List[PivotPoint]:
+        n = len(line)
+        pivots = []
+        
+        segment_size = max(5, n // 8)
+        
+        for start in range(0, n - segment_size + 1, segment_size):
+            end = min(start + segment_size, n)
+            segment = line[start:end]
+            
+            max_idx = start + np.argmax(segment)
+            min_idx = start + np.argmin(segment)
+            
+            if line[max_idx] > np.mean(line):
+                pivots.append(PivotPoint(
+                    index=max_idx,
+                    value=line[max_idx],
+                    is_high=True,
+                    relative_position=max_idx / n
+                ))
+            
+            if line[min_idx] < np.mean(line):
+                pivots.append(PivotPoint(
+                    index=min_idx,
+                    value=line[min_idx],
+                    is_high=False,
+                    relative_position=min_idx / n
+                ))
+        
+        pivots.sort(key=lambda p: p.index)
+        return self._filter_redundant_pivots(pivots, line)
+    
+    def _filter_redundant_pivots(self, pivots: List[PivotPoint], line: np.ndarray) -> List[PivotPoint]:
+        if len(pivots) <= 2:
+            return pivots
+        
+        filtered = [pivots[0]]
+        
+        for i in range(1, len(pivots)):
+            prev = filtered[-1]
+            curr = pivots[i]
+            
+            if curr.is_high == prev.is_high:
+                if curr.is_high and curr.value > prev.value:
+                    filtered[-1] = curr
+                elif not curr.is_high and curr.value < prev.value:
+                    filtered[-1] = curr
+            else:
+                value_diff = abs(curr.value - prev.value)
+                line_range = np.max(line) - np.min(line)
+                if line_range > 0 and value_diff / line_range > 0.03:
+                    filtered.append(curr)
+        
+        return filtered
+    
+    def _select_important_pivots(self, pivots: List[PivotPoint], line: np.ndarray) -> List[PivotPoint]:
+        if len(pivots) <= self.num_pivots:
+            return pivots
+        
+        line_range = np.max(line) - np.min(line)
+        if line_range == 0:
+            return pivots[:self.num_pivots]
+        
+        scores = []
+        for i, p in enumerate(pivots):
+            prominence = abs(p.value - np.mean(line)) / line_range
+            
+            position_weight = 1.0
+            if p.relative_position > 0.7:
+                position_weight = 1.5
+            elif p.relative_position < 0.1:
+                position_weight = 1.3
+            
+            neighbor_diff = 0
+            if i > 0:
+                neighbor_diff = max(neighbor_diff, abs(p.value - pivots[i-1].value) / line_range)
+            if i < len(pivots) - 1:
+                neighbor_diff = max(neighbor_diff, abs(p.value - pivots[i+1].value) / line_range)
+            
+            score = (prominence * 0.4 + neighbor_diff * 0.4) * position_weight
+            scores.append((score, p))
+        
+        scores.sort(reverse=True)
+        selected = [s[1] for s in scores[:self.num_pivots]]
+        selected.sort(key=lambda p: p.index)
+        
+        return selected
+    
     def calculate_pivot_sequence(self, pivots: List[PivotPoint], line: np.ndarray) -> List[float]:
-        """Calculate normalized sequence of pivot values."""
         if not pivots or len(line) == 0:
             return []
         
@@ -147,7 +268,6 @@ class StructureExtractor:
         return [(p.value - min_val) / range_val for p in pivots]
     
     def calculate_relative_distances(self, pivots: List[PivotPoint]) -> List[float]:
-        """Calculate relative distances between consecutive pivots."""
         if len(pivots) < 2:
             return []
         
@@ -162,7 +282,6 @@ class StructureExtractor:
         return [d / total for d in distances] if total > 0 else distances
     
     def calculate_trend(self, line: np.ndarray) -> float:
-        """Calculate overall trend direction (-1 to 1)."""
         if len(line) < 2:
             return 0.0
         
@@ -173,7 +292,6 @@ class StructureExtractor:
         return normalized_slope * abs(r_value)
     
     def calculate_volatility(self, line: np.ndarray) -> float:
-        """Calculate normalized volatility."""
         if len(line) < 2:
             return 0.0
         
@@ -181,7 +299,6 @@ class StructureExtractor:
         return np.std(returns)
     
     def calculate_compression(self, line: np.ndarray, pivots: List[PivotPoint]) -> float:
-        """Calculate compression ratio (how much volatility decreases over time)."""
         if len(line) < 20:
             return 0.0
         
@@ -197,9 +314,70 @@ class StructureExtractor:
         
         return 1.0 - (vol_second / vol_first) if vol_first > vol_second else -(vol_second / vol_first - 1.0)
     
+    def _detect_impulse(self, line: np.ndarray) -> Tuple[bool, str]:
+        n = len(line)
+        if n < 10:
+            return False, ""
+        
+        segment_size = max(3, n // 5)
+        
+        diffs = np.diff(line)
+        abs_diffs = np.abs(diffs)
+        mean_move = np.mean(abs_diffs)
+        
+        for i in range(n - segment_size):
+            segment_move = abs(line[i + segment_size] - line[i])
+            segment_time = segment_size / n
+            
+            avg_move_before = np.mean(abs_diffs[:max(1, i)]) if i > 0 else mean_move
+            
+            if avg_move_before > 0:
+                impulse_ratio = (segment_move / segment_size) / (avg_move_before + 1e-10)
+            else:
+                impulse_ratio = 0
+            
+            price_range = np.max(line) - np.min(line)
+            if price_range > 0 and segment_move / price_range > 0.5 and impulse_ratio > 3:
+                direction = "up" if line[i + segment_size] > line[i] else "down"
+                return True, direction
+        
+        last_quarter = line[int(n * 0.75):]
+        first_three_quarters = line[:int(n * 0.75)]
+        
+        if len(last_quarter) > 1 and len(first_three_quarters) > 1:
+            last_range = np.max(last_quarter) - np.min(last_quarter)
+            first_range = np.max(first_three_quarters) - np.min(first_three_quarters)
+            price_range = np.max(line) - np.min(line)
+            
+            if price_range > 0 and last_range / price_range > 0.6:
+                last_trend = last_quarter[-1] - last_quarter[0]
+                if abs(last_trend) / price_range > 0.4:
+                    direction = "up" if last_trend > 0 else "down"
+                    return True, direction
+        
+        return False, ""
+    
     def classify_structure(self, trend: float, compression: float, 
                           pivots: List[PivotPoint], line: np.ndarray) -> StructureType:
-        """Classify the structure type based on features."""
+        is_impulse, impulse_dir = self._detect_impulse(line)
+        if is_impulse:
+            if impulse_dir == "up":
+                return StructureType.IMPULSE_UP
+            else:
+                return StructureType.IMPULSE_DOWN
+        
+        n = len(line)
+        if n > 10:
+            flat_portion = line[:int(n * 0.7)]
+            spike_portion = line[int(n * 0.7):]
+            if len(flat_portion) > 1 and len(spike_portion) > 1:
+                flat_range = np.max(flat_portion) - np.min(flat_portion)
+                spike_range = np.max(spike_portion) - np.min(spike_portion)
+                total_range = np.max(line) - np.min(line)
+                
+                if total_range > 0 and flat_range / total_range < 0.3 and spike_range / total_range > 0.5:
+                    return StructureType.BREAKOUT
+        
         if compression > 0.3:
             if len(pivots) >= 4:
                 highs = [p.value for p in pivots if p.is_high]
@@ -247,7 +425,6 @@ class StructureExtractor:
                              relative_distances: List[float],
                              trend: float, volatility: float,
                              compression: float) -> np.ndarray:
-        """Create a fixed-size feature vector for similarity comparison."""
         line_features = normalized_line[:self.resample_points] if len(normalized_line) >= self.resample_points else np.pad(normalized_line, (0, self.resample_points - len(normalized_line)))
         
         pivot_features = np.zeros(self.num_pivots)
@@ -270,7 +447,6 @@ class StructureExtractor:
         return feature_vector
     
     def extract_features(self, line: np.ndarray) -> Optional[StructureFeatures]:
-        """Extract all structural features from a price line."""
         if len(line) < 10:
             return None
         
@@ -301,12 +477,10 @@ class StructureExtractor:
         )
     
     def extract_from_candles(self, closes: List[float]) -> Optional[StructureFeatures]:
-        """Extract features from candle close prices."""
         line = np.array(closes)
         return self.extract_features(line)
     
     def features_from_dict(self, data: dict) -> StructureFeatures:
-        """Reconstruct StructureFeatures from a dictionary (e.g., from database)."""
         pivot_points = []
         for p in data.get("pivot_points", []):
             pivot_points.append(PivotPoint(
@@ -324,7 +498,10 @@ class StructureExtractor:
         compression_ratio = data.get("compression_ratio", 0.0)
         
         structure_type_str = data.get("structure_type", "range")
-        structure_type = StructureType(structure_type_str) if isinstance(structure_type_str, str) else structure_type_str
+        try:
+            structure_type = StructureType(structure_type_str) if isinstance(structure_type_str, str) else structure_type_str
+        except ValueError:
+            structure_type = StructureType.UNKNOWN
         
         feature_vector = np.array(data.get("feature_vector", []))
         if len(feature_vector) == 0:
