@@ -122,7 +122,7 @@ async def on_market_update(symbol: str, timeframe: str):
     
     structures = scanner.get_all_structures()
     
-    relevant = [(s, tf, f, ts, p) for s, tf, f, ts, p in structures 
+    relevant = [(s, tf, f, ts) for s, tf, f, ts in structures 
                 if s == symbol and tf == timeframe]
     
     if not relevant:
@@ -148,8 +148,7 @@ async def on_market_update(symbol: str, timeframe: str):
                 "timestamp": match.timestamp,
                 "is_mirrored": match.is_mirrored,
                 "normalized_line": match.normalized_line,
-                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0),
-                "pattern_price": match.pattern_price
+                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0)
             }
         })
 
@@ -162,10 +161,10 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
         return
     
     structures = scanner.get_all_structures()
-    relevant = [(s, tf, f, ts, p) for s, tf, f, ts, p in structures 
+    relevant = [(s, tf, f, ts) for s, tf, f, ts in structures 
                 if s == symbol and tf == timeframe]
     
-    for sym, tf, features, timestamp, price in relevant:
+    for sym, tf, features, timestamp in relevant:
         if features is None:
             continue
         if features.structure_type.value == search_type_filter:
@@ -184,8 +183,7 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
                     "timestamp": timestamp,
                     "is_mirrored": False,
                     "normalized_line": features.normalized_line.tolist(),
-                    "price_change_24h": scanner.price_change_24h.get(sym, 0),
-                    "pattern_price": price
+                    "price_change_24h": scanner.price_change_24h.get(sym, 0)
                 }
             })
 
@@ -214,10 +212,6 @@ async def on_market_update_candle_scan(symbol: str, timeframe: str):
             rng = mx - mn if mx > mn else 1
             normalized = [(v - mn) / rng for v in closes]
             
-            last_candle = candles[-1]
-            candle_time = datetime.fromtimestamp(last_candle.open_time / 1000).isoformat()
-            candle_price = last_candle.close
-            
             await broadcast_message({
                 "type": "match",
                 "data": {
@@ -226,11 +220,10 @@ async def on_market_update_candle_scan(symbol: str, timeframe: str):
                     "timeframe": timeframe,
                     "similarity_score": 100.0,
                     "structure_type": pat.value,
-                    "timestamp": candle_time,
+                    "timestamp": datetime.now().isoformat(),
                     "is_mirrored": False,
                     "normalized_line": normalized,
-                    "price_change_24h": scanner.price_change_24h.get(symbol, 0),
-                    "pattern_price": candle_price
+                    "price_change_24h": scanner.price_change_24h.get(symbol, 0)
                 }
             })
 
@@ -263,10 +256,6 @@ async def run_initial_candle_scan():
                     rng = mx - mn if mx > mn else 1
                     normalized = [(v - mn) / rng for v in closes]
                     
-                    last_candle = candles[-1]
-                    candle_time = datetime.fromtimestamp(last_candle.open_time / 1000).isoformat()
-                    candle_price = last_candle.close
-                    
                     await broadcast_message({
                         "type": "match",
                         "data": {
@@ -275,11 +264,10 @@ async def run_initial_candle_scan():
                             "timeframe": timeframe,
                             "similarity_score": 100.0,
                             "structure_type": pat.value,
-                            "timestamp": candle_time,
+                            "timestamp": datetime.now().isoformat(),
                             "is_mirrored": False,
                             "normalized_line": normalized,
-                            "price_change_24h": scanner.price_change_24h.get(symbol, 0),
-                            "pattern_price": candle_price
+                            "price_change_24h": scanner.price_change_24h.get(symbol, 0)
                         }
                     })
     
@@ -335,8 +323,7 @@ async def run_initial_scan():
                 "timestamp": match.timestamp,
                 "is_mirrored": match.is_mirrored,
                 "normalized_line": match.normalized_line,
-                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0),
-                "pattern_price": match.pattern_price
+                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0)
             }
         })
     
@@ -356,7 +343,7 @@ async def run_initial_type_scan():
     structures = scanner.get_all_structures()
     match_count = 0
     
-    for sym, tf, features, timestamp, price in structures:
+    for sym, tf, features, timestamp in structures:
         if features is None:
             continue
         if features.structure_type.value == search_type_filter:
@@ -372,8 +359,7 @@ async def run_initial_type_scan():
                     "timestamp": timestamp,
                     "is_mirrored": False,
                     "normalized_line": features.normalized_line.tolist(),
-                    "price_change_24h": scanner.price_change_24h.get(sym, 0),
-                    "pattern_price": price
+                    "price_change_24h": scanner.price_change_24h.get(sym, 0)
                 }
             })
     
@@ -854,32 +840,8 @@ async def get_upload(filename: str):
 @app.get("/api/chart/{symbol}/{timeframe}")
 async def get_chart_data(symbol: str, timeframe: str):
     """Get chart data for a symbol/timeframe."""
-    lookup_symbols = [symbol]
-    if symbol.endswith("USDT"):
-        lookup_symbols.append(symbol[:-4])
-    else:
-        lookup_symbols.append(symbol + "USDT")
-
-    for sym in lookup_symbols:
-        data = scanner.get_symbol_chart_data(sym, timeframe)
-        if data:
-            return {"data": data}
-
-    resolve_sym = lookup_symbols[0]
-    if resolve_sym.endswith("USDT"):
-        base_sym = resolve_sym[:-4]
-    else:
-        base_sym = resolve_sym
-    candles = await scanner.fetch_candles(base_sym, timeframe, 100)
-    if candles:
-        from src.backend.binance_scanner import SymbolData
-        if base_sym not in scanner.symbol_data:
-            scanner.symbol_data[base_sym] = SymbolData(symbol=base_sym)
-        scanner.symbol_data[base_sym].candles[timeframe] = candles
-        data = scanner.get_symbol_chart_data(base_sym, timeframe)
-        return {"data": data}
-
-    return {"data": []}
+    data = scanner.get_symbol_chart_data(symbol, timeframe)
+    return {"data": data}
 
 
 @app.websocket("/ws")

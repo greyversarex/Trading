@@ -341,19 +341,12 @@ class BinanceScanner:
     def get_all_structures(self) -> List[tuple]:
         """Get all current structures for matching."""
         results = []
+        timestamp = datetime.now().isoformat()
         
         for symbol, data in self.symbol_data.items():
             for timeframe, features in data.structures.items():
                 if features is not None:
-                    candles = data.candles.get(timeframe, [])
-                    if candles:
-                        last_candle = candles[-1]
-                        ts = datetime.fromtimestamp(last_candle.open_time / 1000).isoformat()
-                        price = last_candle.close
-                    else:
-                        ts = datetime.now().isoformat()
-                        price = 0
-                    results.append((symbol, timeframe, features, ts, price))
+                    results.append((symbol, timeframe, features, timestamp))
         
         return results
     

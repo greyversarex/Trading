@@ -16,7 +16,6 @@ class MatchResult:
     timestamp: str
     is_mirrored: bool
     normalized_line: List[float]
-    pattern_price: float = 0.0
 
 
 class SimilarityMatcher:
@@ -178,17 +177,15 @@ class SimilarityMatcher:
         return normal_score * 100, False
     
     def find_matches(self, reference: StructureFeatures,
-                    candidates: List[Tuple],
+                    candidates: List[Tuple[str, str, StructureFeatures, str]],
                     threshold: float = 50.0) -> List[MatchResult]:
         """
         Find all candidates above similarity threshold.
-        candidates: List of (symbol, timeframe, features, timestamp, price)
+        candidates: List of (symbol, timeframe, features, timestamp)
         """
         matches = []
         
-        for item in candidates:
-            symbol, timeframe, features, timestamp = item[0], item[1], item[2], item[3]
-            price = item[4] if len(item) > 4 else 0.0
+        for symbol, timeframe, features, timestamp in candidates:
             if features is None:
                 continue
             
@@ -202,8 +199,7 @@ class SimilarityMatcher:
                     structure_type=features.structure_type,
                     timestamp=timestamp,
                     is_mirrored=is_mirrored,
-                    normalized_line=features.normalized_line.tolist(),
-                    pattern_price=price
+                    normalized_line=features.normalized_line.tolist()
                 ))
         
         matches.sort(key=lambda x: x.similarity_score, reverse=True)
