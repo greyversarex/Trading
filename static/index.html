@@ -995,6 +995,8 @@
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
             
+            if (!dot || !text || !startBtn || !stopBtn) return;
+            
             if (scanning) {
                 dot.className = 'w-3 h-3 rounded-full bg-green-500 animate-pulse mr-2';
                 text.textContent = 'Сканирование...';
@@ -1245,21 +1247,24 @@
                 highlightActiveTypeBtn(structureType);
                 
                 const typeName = structureTypeLabels[structureType] || structureType;
-                document.getElementById('uploadedImage').classList.add('hidden');
+                const uploadedImg = document.getElementById('uploadedImage');
+                if (uploadedImg) uploadedImg.classList.add('hidden');
                 
                 const infoDiv = document.getElementById('structureInfo');
-                infoDiv.innerHTML = `
-                    <div class="text-sm">
-                        <div class="flex items-center gap-2 mb-2">
-                            <span class="text-lg font-bold text-blue-400">Поиск по типу</span>
+                if (infoDiv) {
+                    infoDiv.innerHTML = `
+                        <div class="text-sm">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-lg font-bold text-blue-400">Поиск по типу</span>
+                            </div>
+                            <div class="bg-gray-700 rounded p-3">
+                                <div class="text-gray-300">Ищем: <span class="text-white font-medium">${typeName}</span></div>
+                                <div class="text-xs text-gray-400 mt-1">Сканируем все пары и таймфреймы</div>
+                            </div>
                         </div>
-                        <div class="bg-gray-700 rounded p-3">
-                            <div class="text-gray-300">Ищем: <span class="text-white font-medium">${typeName}</span></div>
-                            <div class="text-xs text-gray-400 mt-1">Сканируем все пары и таймфреймы</div>
-                        </div>
-                    </div>
-                `;
-                infoDiv.classList.remove('hidden');
+                    `;
+                    infoDiv.classList.remove('hidden');
+                }
                 
                 const response = await fetch('/api/start-scan', {
                     method: 'POST',
@@ -1276,7 +1281,7 @@
                 updateStatus(true);
                 
             } catch (error) {
-                alert('Ошибка запуска сканирования: ' + error.message);
+                console.error('Ошибка запуска сканирования:', error);
             }
         }
         
