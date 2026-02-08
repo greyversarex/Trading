@@ -294,11 +294,20 @@
         <div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-auto" onclick="event.stopPropagation()">
             <div class="flex justify-between items-center mb-4">
                 <h3 id="modalTitle" class="text-xl font-semibold">BTC/USDT - 1h</h3>
-                <button onclick="closeModal()" class="text-gray-400 hover:text-white">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
+                <div class="flex items-center gap-2">
+                    <button id="modalTvBtn" onclick="openTvFromModal()" 
+                            class="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-1.5 px-3 rounded-lg transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
+                        </svg>
+                        TradingView
+                    </button>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-white">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
             
             <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
@@ -1624,6 +1633,80 @@
             }
         }
 
+        const timeframeToTvInterval = {
+            '1m': '1',
+            '3m': '3',
+            '5m': '5',
+            '15m': '15',
+            '30m': '30',
+            '1h': '60',
+            '4h': '240',
+            '1d': 'D',
+            '1w': 'W',
+        };
+
+        function openTradingViewChart(symbol, timeframe) {
+            const tvSymbol = 'BINANCE:' + symbol.replace('/', '');
+            const interval = timeframeToTvInterval[timeframe] || '60';
+            
+            document.getElementById('tvChartTitle').textContent = symbol;
+            document.getElementById('tvChartTimeframe').textContent = timeframe;
+            document.getElementById('tvChartLink').href = `https://www.tradingview.com/chart/?symbol=${tvSymbol}&interval=${interval}`;
+            
+            const container = document.getElementById('tvChartContainer');
+            container.innerHTML = '';
+            
+            const widgetDiv = document.createElement('div');
+            widgetDiv.className = 'tradingview-widget-container';
+            widgetDiv.style.height = '100%';
+            widgetDiv.style.width = '100%';
+            
+            const innerDiv = document.createElement('div');
+            innerDiv.className = 'tradingview-widget-container__widget';
+            innerDiv.style.height = '100%';
+            innerDiv.style.width = '100%';
+            widgetDiv.appendChild(innerDiv);
+            
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+            script.async = true;
+            script.textContent = JSON.stringify({
+                "autosize": true,
+                "symbol": tvSymbol,
+                "interval": interval,
+                "timezone": "Etc/UTC",
+                "theme": "dark",
+                "style": "1",
+                "locale": "ru",
+                "allow_symbol_change": true,
+                "calendar": false,
+                "hide_volume": false,
+                "support_host": "https://www.tradingview.com"
+            });
+            widgetDiv.appendChild(script);
+            
+            container.appendChild(widgetDiv);
+            
+            const modal = document.getElementById('tvChartModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function openTvFromModal() {
+            if (!currentModalMatch) return;
+            closeModal();
+            openTradingViewChart(currentModalMatch.symbol, currentModalMatch.timeframe);
+        }
+
+        function closeTvChart(event) {
+            if (event && event.target && event.target !== document.getElementById('tvChartModal')) return;
+            const modal = document.getElementById('tvChartModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            document.getElementById('tvChartContainer').innerHTML = '';
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             connectWebSocket();
             loadGallery();
@@ -1689,7 +1772,14 @@
             });
             
             document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') closeModal();
+                if (e.key === 'Escape') {
+                    const tvModal = document.getElementById('tvChartModal');
+                    if (!tvModal.classList.contains('hidden')) {
+                        closeTvChart();
+                    } else {
+                        closeModal();
+                    }
+                }
             });
             
             document.getElementById('refreshGallery').addEventListener('click', loadGallery);
