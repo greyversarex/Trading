@@ -615,6 +615,48 @@ async def get_threshold():
     return {"threshold": scan_threshold}
 
 
+_market_movers_cache: Dict[str, Any] = {"data": [], "timestamp": 0}
+
+@app.get("/api/market-movers")
+async def get_market_movers():
+    """Get all coins with 24h price changes for market overview."""
+    import time as _time
+    cache_ttl = 300
+    now = _time.time()
+    
+    if now - _market_movers_cache["timestamp"] > cache_ttl or not _market_movers_cache["data"]:
+        try:
+            import aiohttp
+            url = "https://api.coingecko.com/api/v3/coins/markets"
+            params = {
+                "vs_currency": "usd",
+                "order": "market_cap_desc",
+                "per_page": 100,
+                "page": 1
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        movers = []
+                        for item in data:
+                            sym = item['symbol'].upper()
+                            change = item.get('price_change_percentage_24h', 0)
+                            change = round(change, 2) if change else 0
+                            scanner.price_change_24h[sym] = change
+                            movers.append({
+                                "symbol": f"{sym}USDT",
+                                "price_change_24h": change
+                            })
+                        movers.sort(key=lambda x: x["price_change_24h"], reverse=True)
+                        _market_movers_cache["data"] = movers
+                        _market_movers_cache["timestamp"] = now
+        except Exception as e:
+            print(f"Error fetching market movers: {e}")
+    
+    return {"movers": _market_movers_cache["data"]}
+
+
 @app.get("/api/status")
 async def get_status():
     """Get current scanner status."""

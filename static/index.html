@@ -470,6 +470,8 @@
         let modalChart = null;
         let currentFilter = '';
         let currentSort = 'similarity';
+        let marketMovers = [];
+        let isMarketView = false;
         let matchIdCounter = 0;
         
         let manualPivots = [];
@@ -586,6 +588,24 @@
         function renderMatches() {
             const table = document.getElementById('matchesTable');
             const count = document.getElementById('matchCount');
+            const thead = table.closest('table').querySelector('thead tr');
+            
+            if (isMarketView) {
+                renderMarketView(table, count, thead);
+                return;
+            }
+            
+            thead.innerHTML = `
+                <th class="pb-3 pr-4">Пара</th>
+                <th class="pb-3 pr-4">Таймфрейм</th>
+                <th class="pb-3 pr-4">Тип</th>
+                <th class="pb-3 pr-4">Схожесть</th>
+                <th class="pb-3 pr-4">24ч</th>
+                <th class="pb-3 pr-4">Превью</th>
+                <th class="pb-3 pr-4">Время</th>
+                <th class="pb-3 pr-2">График</th>
+                <th class="pb-3">Оценка</th>
+            `;
             
             const filteredMatches = getFilteredAndSortedMatches();
             count.textContent = `${filteredMatches.length} совпадений`;
@@ -665,6 +685,56 @@
             filteredMatches.forEach((match, index) => {
                 drawSparkline(`sparkline-${index}`, match.normalized_line);
             });
+        }
+        
+        function renderMarketView(table, count, thead) {
+            let sorted = [...marketMovers];
+            if (currentSort === 'top_losers') {
+                sorted.sort((a, b) => a.price_change_24h - b.price_change_24h);
+            }
+            
+            const label = currentSort === 'top_gainers' ? 'Топ роста' : 'Топ падения';
+            count.textContent = `${sorted.length} монет — ${label}`;
+            
+            thead.innerHTML = `
+                <th class="pb-3 pr-4">#</th>
+                <th class="pb-3 pr-4">Пара</th>
+                <th class="pb-3 pr-4">Изменение 24ч</th>
+                <th class="pb-3 pr-2">График</th>
+            `;
+            
+            if (sorted.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="4" class="py-8 text-center text-gray-500">
+                            Данные о рынке загружаются...
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            table.innerHTML = sorted.map((coin, index) => `
+                <tr class="border-b border-gray-700 hover:bg-gray-700/50">
+                    <td class="py-3 pr-4 text-gray-500">${index + 1}</td>
+                    <td class="py-3 pr-4">
+                        <span class="font-medium">${coin.symbol}</span>
+                    </td>
+                    <td class="py-3 pr-4">
+                        <span class="text-sm font-bold ${coin.price_change_24h >= 0 ? 'text-green-400' : 'text-red-400'}">
+                            ${coin.price_change_24h >= 0 ? '+' : ''}${coin.price_change_24h.toFixed(2)}%
+                        </span>
+                    </td>
+                    <td class="py-3 pr-2">
+                        <button onclick="openTradingViewChart('${coin.symbol}', '1h')" 
+                                class="p-1.5 hover:bg-blue-600/20 rounded text-blue-400 hover:text-blue-300 transition" title="Открыть график TradingView">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
+                            </svg>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
         }
 
         function openModalById(localId) {
@@ -1813,9 +1883,23 @@
                 renderMatches();
             });
             
-            document.getElementById('sortBy').addEventListener('change', (e) => {
+            document.getElementById('sortBy').addEventListener('change', async (e) => {
                 currentSort = e.target.value;
-                renderMatches();
+                if (currentSort === 'top_gainers' || currentSort === 'top_losers') {
+                    isMarketView = true;
+                    try {
+                        const resp = await fetch('/api/market-movers');
+                        const data = await resp.json();
+                        marketMovers = data.movers || [];
+                    } catch(err) {
+                        console.error('Ошибка загрузки данных рынка:', err);
+                        marketMovers = [];
+                    }
+                    renderMatches();
+                } else {
+                    isMarketView = false;
+                    renderMatches();
+                }
             });
             
             document.addEventListener('keydown', (e) => {
