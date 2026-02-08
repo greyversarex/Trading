@@ -6,6 +6,7 @@
     <title>Сканер Структур Графиков</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         .dropzone {
             border: 2px dashed #4a5568;
@@ -842,8 +843,8 @@
                     </td>
                     <td class="py-3 pr-2">
                         <div onclick="event.stopPropagation()">
-                            <button onclick="openTradingViewChart('${match.symbol}', '${match.timeframe}')" 
-                                    class="p-1.5 hover:bg-blue-600/20 rounded text-blue-400 hover:text-blue-300 transition" title="Открыть график TradingView">
+                            <button onclick="openTradingViewChart('${match.symbol}', '${match.timeframe}', '${match.structure_type || ''}', ${match.pattern_price || 0})" 
+                                    class="p-1.5 hover:bg-blue-600/20 rounded text-blue-400 hover:text-blue-300 transition" title="Открыть график">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
                                 </svg>
@@ -2343,7 +2344,11 @@
             '1w': 'W',
         };
 
-        function openTradingViewChart(symbol, timeframe) {
+        let lwChart = null;
+        let lwCandleSeries = null;
+        let lwResizeObserver = null;
+
+        async function openTradingViewChart(symbol, timeframe, structureType, patternPrice) {
             let cleanSymbol = symbol.replace('/', '');
             if (!cleanSymbol.endsWith('USDT') && !cleanSymbol.endsWith('BTC') && !cleanSymbol.endsWith('BUSD') && !cleanSymbol.endsWith('ETH')) {
                 cleanSymbol = cleanSymbol + 'USDT';
@@ -2358,47 +2363,303 @@
             const container = document.getElementById('tvChartContainer');
             container.innerHTML = '';
             
-            const widgetDiv = document.createElement('div');
-            widgetDiv.className = 'tradingview-widget-container';
-            widgetDiv.style.height = '100%';
-            widgetDiv.style.width = '100%';
-            
-            const innerDiv = document.createElement('div');
-            innerDiv.className = 'tradingview-widget-container__widget';
-            innerDiv.style.height = '100%';
-            innerDiv.style.width = '100%';
-            widgetDiv.appendChild(innerDiv);
-            
-            const script = document.createElement('script');
-            script.type = 'text/javascript';
-            script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-            script.async = true;
-            script.textContent = JSON.stringify({
-                "autosize": true,
-                "symbol": tvSymbol,
-                "interval": interval,
-                "timezone": "Etc/UTC",
-                "theme": "dark",
-                "style": "1",
-                "locale": "ru",
-                "allow_symbol_change": true,
-                "calendar": false,
-                "hide_volume": false,
-                "support_host": "https://www.tradingview.com"
-            });
-            widgetDiv.appendChild(script);
-            
-            container.appendChild(widgetDiv);
-            
             const modal = document.getElementById('tvChartModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
+            
+            try {
+                const resp = await fetch(`/api/chart/${cleanSymbol}/${timeframe}`);
+                const json = await resp.json();
+                const candles = json.data;
+                
+                if (!candles || candles.length === 0) {
+                    container.innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">Нет данных для этой пары</div>';
+                    return;
+                }
+                
+                const chartData = candles.map(c => ({
+                    time: Math.floor(c.time / 1000),
+                    open: c.open,
+                    high: c.high,
+                    low: c.low,
+                    close: c.close
+                }));
+                
+                if (lwChart) {
+                    lwChart.remove();
+                    lwChart = null;
+                }
+                
+                lwChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth,
+                    height: container.clientHeight,
+                    layout: {
+                        background: { type: 'solid', color: '#111827' },
+                        textColor: '#9ca3af',
+                    },
+                    grid: {
+                        vertLines: { color: '#1f2937' },
+                        horzLines: { color: '#1f2937' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    },
+                    rightPriceScale: {
+                        borderColor: '#374151',
+                    },
+                    timeScale: {
+                        borderColor: '#374151',
+                        timeVisible: true,
+                        secondsVisible: false,
+                    },
+                });
+                
+                lwCandleSeries = lwChart.addCandlestickSeries({
+                    upColor: '#22c55e',
+                    downColor: '#ef4444',
+                    borderDownColor: '#ef4444',
+                    borderUpColor: '#22c55e',
+                    wickDownColor: '#ef4444',
+                    wickUpColor: '#22c55e',
+                });
+                lwCandleSeries.setData(chartData);
+                
+                addChartAnnotations(lwChart, lwCandleSeries, chartData, structureType, patternPrice);
+                
+                lwChart.timeScale().fitContent();
+                
+                if (lwResizeObserver) lwResizeObserver.disconnect();
+                lwResizeObserver = new ResizeObserver(() => {
+                    if (lwChart) {
+                        lwChart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+                    }
+                });
+                lwResizeObserver.observe(container);
+                
+            } catch (err) {
+                console.error('Ошибка загрузки графика:', err);
+                container.innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">Ошибка загрузки данных</div>';
+            }
+        }
+
+        function addChartAnnotations(chart, series, chartData, structureType, patternPrice) {
+            if (!structureType || !chartData.length) return;
+            
+            const len = chartData.length;
+            const lastCandle = chartData[len - 1];
+            const isBearish = structureType.includes('bear') || structureType === 'shooting_star' || 
+                structureType === 'evening_star' || structureType === 'three_black_crows' || 
+                structureType === 'dark_cloud' || structureType === 'tweezer_top' ||
+                structureType === 'squeeze_down' || structureType === 'trend_down' || 
+                structureType === 'impulse_down' || structureType === 'double_top' || 
+                structureType === 'head_shoulders' || structureType === 'rising_wedge';
+            
+            const candleTypes = ['doji','hammer','inverted_hammer','shooting_star','spinning_top',
+                'marubozu_bull','marubozu_bear','engulfing_bull','engulfing_bear','morning_star',
+                'evening_star','three_white_soldiers','three_black_crows','harami_bull','harami_bear',
+                'piercing_line','dark_cloud','tweezer_top','tweezer_bottom'];
+            const isCandle = candleTypes.includes(structureType);
+            
+            const markerColor = isBearish ? '#ef4444' : '#22c55e';
+            const label = structureTypeLabels[structureType] || structureType;
+            
+            if (isCandle) {
+                series.setMarkers([{
+                    time: lastCandle.time,
+                    position: isBearish ? 'aboveBar' : 'belowBar',
+                    color: markerColor,
+                    shape: isBearish ? 'arrowDown' : 'arrowUp',
+                    text: label,
+                }]);
+                
+                if (patternPrice > 0) {
+                    const priceLine = series.createPriceLine({
+                        price: patternPrice,
+                        color: markerColor,
+                        lineWidth: 1,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: label,
+                    });
+                }
+                return;
+            }
+            
+            const findPivots = (data, window) => {
+                const highs = [], lows = [];
+                const win = window || Math.max(3, Math.floor(data.length / 12));
+                for (let i = win; i < data.length - win; i++) {
+                    let isHigh = true, isLow = true;
+                    for (let j = i - win; j <= i + win; j++) {
+                        if (j === i) continue;
+                        if (data[j].high >= data[i].high) isHigh = false;
+                        if (data[j].low <= data[i].low) isLow = false;
+                    }
+                    if (isHigh) highs.push(i);
+                    if (isLow) lows.push(i);
+                }
+                return { highs, lows };
+            };
+            
+            const { highs, lows } = findPivots(chartData);
+            const allHighs = highs.map(i => chartData[i].high);
+            const allLows = lows.map(i => chartData[i].low);
+            const maxPrice = allHighs.length ? Math.max(...allHighs) : chartData.reduce((m, c) => Math.max(m, c.high), 0);
+            const minPrice = allLows.length ? Math.min(...allLows) : chartData.reduce((m, c) => Math.min(m, c.low), Infinity);
+            
+            const markers = [];
+            
+            switch (structureType) {
+                case 'squeeze_up': {
+                    if (allHighs.length >= 2) {
+                        const avgHigh = allHighs.reduce((s, v) => s + v, 0) / allHighs.length;
+                        series.createPriceLine({
+                            price: avgHigh,
+                            color: '#ef4444',
+                            lineWidth: 1,
+                            lineStyle: LightweightCharts.LineStyle.Dashed,
+                            axisLabelVisible: true,
+                            title: 'Сопротивление',
+                        });
+                    }
+                    lows.forEach(i => markers.push({
+                        time: chartData[i].time,
+                        position: 'belowBar',
+                        color: '#22c55e',
+                        shape: 'arrowUp',
+                        text: '',
+                    }));
+                    break;
+                }
+                case 'squeeze_down': {
+                    if (allLows.length >= 2) {
+                        const avgLow = allLows.reduce((s, v) => s + v, 0) / allLows.length;
+                        series.createPriceLine({
+                            price: avgLow,
+                            color: '#22c55e',
+                            lineWidth: 1,
+                            lineStyle: LightweightCharts.LineStyle.Dashed,
+                            axisLabelVisible: true,
+                            title: 'Поддержка',
+                        });
+                    }
+                    highs.forEach(i => markers.push({
+                        time: chartData[i].time,
+                        position: 'aboveBar',
+                        color: '#ef4444',
+                        shape: 'arrowDown',
+                        text: '',
+                    }));
+                    break;
+                }
+                case 'triangle':
+                case 'compression': {
+                    if (maxPrice) series.createPriceLine({ price: maxPrice, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Верх' });
+                    if (minPrice < Infinity) series.createPriceLine({ price: minPrice, color: '#22c55e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Низ' });
+                    highs.forEach(i => markers.push({ time: chartData[i].time, position: 'aboveBar', color: '#ef4444', shape: 'circle', text: '' }));
+                    lows.forEach(i => markers.push({ time: chartData[i].time, position: 'belowBar', color: '#22c55e', shape: 'circle', text: '' }));
+                    break;
+                }
+                case 'range':
+                case 'accumulation': {
+                    series.createPriceLine({ price: maxPrice, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Сопротивление' });
+                    series.createPriceLine({ price: minPrice, color: '#22c55e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Поддержка' });
+                    break;
+                }
+                case 'retest': {
+                    const halfLen = Math.floor(len / 2);
+                    const firstHalf = chartData.slice(0, halfLen);
+                    const levelVal = firstHalf.reduce((m, c) => Math.max(m, c.high), 0);
+                    series.createPriceLine({ price: levelVal, color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Уровень ретеста' });
+                    break;
+                }
+                case 'trend_up': {
+                    lows.forEach(i => markers.push({ time: chartData[i].time, position: 'belowBar', color: '#22c55e', shape: 'arrowUp', text: '' }));
+                    if (minPrice < Infinity) series.createPriceLine({ price: minPrice, color: '#22c55e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'Тренд' });
+                    break;
+                }
+                case 'trend_down': {
+                    highs.forEach(i => markers.push({ time: chartData[i].time, position: 'aboveBar', color: '#ef4444', shape: 'arrowDown', text: '' }));
+                    if (maxPrice) series.createPriceLine({ price: maxPrice, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'Тренд' });
+                    break;
+                }
+                case 'impulse_up':
+                case 'breakout': {
+                    const preData = chartData.slice(0, Math.floor(len * 0.7));
+                    const resistLevel = preData.reduce((m, c) => Math.max(m, c.high), 0);
+                    series.createPriceLine({ price: resistLevel, color: '#22c55e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Пробой' });
+                    markers.push({ time: lastCandle.time, position: 'belowBar', color: '#22c55e', shape: 'arrowUp', text: label });
+                    break;
+                }
+                case 'impulse_down': {
+                    const preData2 = chartData.slice(0, Math.floor(len * 0.7));
+                    const suppLevel = preData2.reduce((m, c) => Math.min(m, c.low), Infinity);
+                    series.createPriceLine({ price: suppLevel, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Пробой' });
+                    markers.push({ time: lastCandle.time, position: 'aboveBar', color: '#ef4444', shape: 'arrowDown', text: label });
+                    break;
+                }
+                case 'double_top': {
+                    series.createPriceLine({ price: maxPrice, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Двойная вершина' });
+                    highs.filter(i => chartData[i].high >= maxPrice * 0.998).forEach(i => markers.push({
+                        time: chartData[i].time, position: 'aboveBar', color: '#ef4444', shape: 'circle', text: '●',
+                    }));
+                    break;
+                }
+                case 'double_bottom': {
+                    series.createPriceLine({ price: minPrice, color: '#22c55e', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Двойное дно' });
+                    lows.filter(i => chartData[i].low <= minPrice * 1.002).forEach(i => markers.push({
+                        time: chartData[i].time, position: 'belowBar', color: '#22c55e', shape: 'circle', text: '●',
+                    }));
+                    break;
+                }
+                case 'head_shoulders': {
+                    if (highs.length >= 2) {
+                        const sortedH = [...highs].sort((a, b) => chartData[b].high - chartData[a].high);
+                        markers.push({ time: chartData[sortedH[0]].time, position: 'aboveBar', color: '#ef4444', shape: 'arrowDown', text: 'Голова' });
+                    }
+                    if (allLows.length >= 2) {
+                        const neckLevel = allLows.reduce((s, v) => s + v, 0) / allLows.length;
+                        series.createPriceLine({ price: neckLevel, color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Линия шеи' });
+                    }
+                    break;
+                }
+                case 'inv_head_shoulders': {
+                    if (lows.length >= 2) {
+                        const sortedL = [...lows].sort((a, b) => chartData[a].low - chartData[b].low);
+                        markers.push({ time: chartData[sortedL[0]].time, position: 'belowBar', color: '#22c55e', shape: 'arrowUp', text: 'Голова' });
+                    }
+                    if (allHighs.length >= 2) {
+                        const neckLevel = allHighs.reduce((s, v) => s + v, 0) / allHighs.length;
+                        series.createPriceLine({ price: neckLevel, color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Линия шеи' });
+                    }
+                    break;
+                }
+                case 'bull_flag':
+                case 'bear_flag': {
+                    series.createPriceLine({ price: maxPrice, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Верх флага' });
+                    series.createPriceLine({ price: minPrice, color: '#22c55e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Низ флага' });
+                    break;
+                }
+                case 'rising_wedge':
+                case 'falling_wedge': {
+                    if (maxPrice) series.createPriceLine({ price: maxPrice, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: '' });
+                    if (minPrice < Infinity) series.createPriceLine({ price: minPrice, color: '#22c55e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: '' });
+                    highs.forEach(i => markers.push({ time: chartData[i].time, position: 'aboveBar', color: '#ef4444', shape: 'circle', text: '' }));
+                    lows.forEach(i => markers.push({ time: chartData[i].time, position: 'belowBar', color: '#22c55e', shape: 'circle', text: '' }));
+                    break;
+                }
+            }
+            
+            if (markers.length > 0) {
+                markers.sort((a, b) => a.time - b.time);
+                series.setMarkers(markers);
+            }
         }
 
         function openTvFromModal() {
             if (!currentModalMatch) return;
             closeModal();
-            openTradingViewChart(currentModalMatch.symbol, currentModalMatch.timeframe);
+            openTradingViewChart(currentModalMatch.symbol, currentModalMatch.timeframe, currentModalMatch.structure_type || '', currentModalMatch.pattern_price || 0);
         }
 
         function closeTvChart(event) {
@@ -2406,6 +2667,15 @@
             const modal = document.getElementById('tvChartModal');
             modal.classList.add('hidden');
             modal.classList.remove('flex');
+            if (lwResizeObserver) {
+                lwResizeObserver.disconnect();
+                lwResizeObserver = null;
+            }
+            if (lwChart) {
+                lwChart.remove();
+                lwChart = null;
+                lwCandleSeries = null;
+            }
             document.getElementById('tvChartContainer').innerHTML = '';
         }
 
