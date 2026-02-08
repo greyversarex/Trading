@@ -451,15 +451,16 @@
                                     <th class="pb-3 pr-4">Тип</th>
                                     <th class="pb-3 pr-4">Схожесть</th>
                                     <th class="pb-3 pr-4">24ч</th>
+                                    <th class="pb-3 pr-4">Цена</th>
                                     <th class="pb-3 pr-4">Превью</th>
-                                    <th class="pb-3 pr-4">Время</th>
+                                    <th class="pb-3 pr-4">Когда</th>
                                     <th class="pb-3 pr-2">График</th>
                                     <th class="pb-3">Оценка</th>
                                 </tr>
                             </thead>
                             <tbody id="matchesTable">
                                 <tr>
-                                    <td colspan="9" class="py-8 text-center text-gray-500">
+                                    <td colspan="10" class="py-8 text-center text-gray-500">
                                         Загрузите график и начните сканирование для поиска совпадений
                                     </td>
                                 </tr>
@@ -499,6 +500,14 @@
                 <div class="bg-gray-700/50 rounded p-3">
                     <span class="text-gray-400">Схожесть:</span>
                     <span id="modalSimilarity" class="ml-2 font-medium text-green-400">74.5%</span>
+                </div>
+                <div class="bg-gray-700/50 rounded p-3">
+                    <span class="text-gray-400">Цена:</span>
+                    <span id="modalPrice" class="ml-2 font-medium text-yellow-300">—</span>
+                </div>
+                <div class="bg-gray-700/50 rounded p-3">
+                    <span class="text-gray-400">Когда:</span>
+                    <span id="modalTime" class="ml-2 font-medium text-gray-200">—</span>
                 </div>
             </div>
             
@@ -789,8 +798,9 @@
                 <th class="pb-3 pr-4">Тип</th>
                 <th class="pb-3 pr-4">Схожесть</th>
                 <th class="pb-3 pr-4">24ч</th>
+                <th class="pb-3 pr-4">Цена</th>
                 <th class="pb-3 pr-4">Превью</th>
-                <th class="pb-3 pr-4">Время</th>
+                <th class="pb-3 pr-4">Когда</th>
                 <th class="pb-3 pr-2">График</th>
                 <th class="pb-3">Оценка</th>
             `;
@@ -801,7 +811,7 @@
             if (filteredMatches.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="9" class="py-8 text-center text-gray-500">
+                        <td colspan="10" class="py-8 text-center text-gray-500">
                             Совпадений пока не найдено
                         </td>
                     </tr>
@@ -836,10 +846,13 @@
                         </span>
                     </td>
                     <td class="py-3 pr-4">
+                        <span class="text-sm text-yellow-300 font-mono">${formatPrice(match.pattern_price)}</span>
+                    </td>
+                    <td class="py-3 pr-4">
                         <canvas id="sparkline-${index}" class="sparkline"></canvas>
                     </td>
-                    <td class="py-3 pr-4 text-gray-400 text-sm">
-                        ${new Date(match.timestamp).toLocaleTimeString('ru-RU')}
+                    <td class="py-3 pr-4 text-gray-400 text-sm" title="${new Date(match.timestamp).toLocaleString('ru-RU')}">
+                        ${formatPatternTime(match.timestamp)}
                     </td>
                     <td class="py-3 pr-2">
                         <div onclick="event.stopPropagation()">
@@ -934,6 +947,8 @@
             document.getElementById('modalTitle').textContent = `${match.symbol} - ${match.timeframe}`;
             document.getElementById('modalType').textContent = structureTypeLabels[match.structure_type] || match.structure_type;
             document.getElementById('modalSimilarity').textContent = `${match.similarity_score.toFixed(1)}%`;
+            document.getElementById('modalPrice').textContent = formatPrice(match.pattern_price);
+            document.getElementById('modalTime').textContent = match.timestamp ? new Date(match.timestamp).toLocaleString('ru-RU') : '—';
             
             const modal = document.getElementById('chartModal');
             modal.classList.remove('hidden');
@@ -1285,6 +1300,27 @@
             if (score >= 80) return 'bg-green-500';
             if (score >= 60) return 'bg-yellow-500';
             return 'bg-blue-500';
+        }
+
+        function formatPrice(price) {
+            if (!price || price === 0) return '—';
+            if (price >= 1000) return '$' + price.toFixed(1);
+            if (price >= 1) return '$' + price.toFixed(2);
+            if (price >= 0.01) return '$' + price.toFixed(4);
+            return '$' + price.toFixed(6);
+        }
+
+        function formatPatternTime(ts) {
+            if (!ts) return '—';
+            const d = new Date(ts);
+            const now = new Date();
+            const diffMs = now - d;
+            const diffMin = Math.floor(diffMs / 60000);
+            const diffHrs = Math.floor(diffMs / 3600000);
+            if (diffMin < 1) return 'только что';
+            if (diffMin < 60) return `${diffMin} мин назад`;
+            if (diffHrs < 24) return `${diffHrs}ч назад`;
+            return d.toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'}) + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
         }
 
         function updateStatus(scanning) {
