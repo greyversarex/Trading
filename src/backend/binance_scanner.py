@@ -64,6 +64,7 @@ class BinanceScanner:
         self.last_structures: Dict[str, Dict[str, StructureFeatures]] = {}
         self._poll_task: Optional[asyncio.Task] = None
         self._base_prices: Dict[str, float] = {}
+        self.price_change_24h: Dict[str, float] = {}
     
     def _get_default_symbols(self) -> List[str]:
         """Return default crypto symbols."""
@@ -189,6 +190,10 @@ class BinanceScanner:
                     if response.status == 200:
                         data = await response.json()
                         symbols = [item['symbol'].upper() for item in data]
+                        for item in data:
+                            sym = item['symbol'].upper()
+                            change = item.get('price_change_percentage_24h', 0)
+                            self.price_change_24h[sym] = round(change, 2) if change else 0
                         self.data_available = True
                         self.working_endpoint = "coingecko"
                         print(f"Got {len(symbols)} symbols from CoinGecko")

@@ -138,7 +138,8 @@ async def on_market_update(symbol: str, timeframe: str):
                 "structure_type": match.structure_type.value,
                 "timestamp": match.timestamp,
                 "is_mirrored": match.is_mirrored,
-                "normalized_line": match.normalized_line
+                "normalized_line": match.normalized_line,
+                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0)
             }
         })
 
@@ -172,7 +173,8 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
                     "structure_type": features.structure_type.value,
                     "timestamp": timestamp,
                     "is_mirrored": False,
-                    "normalized_line": features.normalized_line.tolist()
+                    "normalized_line": features.normalized_line.tolist(),
+                    "price_change_24h": scanner.price_change_24h.get(sym, 0)
                 }
             })
 
@@ -218,7 +220,8 @@ async def run_initial_scan():
                 "structure_type": match.structure_type.value,
                 "timestamp": match.timestamp,
                 "is_mirrored": match.is_mirrored,
-                "normalized_line": match.normalized_line
+                "normalized_line": match.normalized_line,
+                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0)
             }
         })
     
@@ -253,7 +256,8 @@ async def run_initial_type_scan():
                     "structure_type": features.structure_type.value,
                     "timestamp": timestamp,
                     "is_mirrored": False,
-                    "normalized_line": features.normalized_line.tolist()
+                    "normalized_line": features.normalized_line.tolist(),
+                    "price_change_24h": scanner.price_change_24h.get(sym, 0)
                 }
             })
     

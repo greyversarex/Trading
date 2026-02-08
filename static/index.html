@@ -271,6 +271,8 @@
                                 <option value="similarity">По схожести</option>
                                 <option value="time">По времени</option>
                                 <option value="symbol">По паре</option>
+                                <option value="top_gainers">Топ роста 24ч</option>
+                                <option value="top_losers">Топ падения 24ч</option>
                             </select>
                             <span id="matchCount" class="text-gray-400">0 совпадений</span>
                             <button id="clearMatches" class="text-gray-400 hover:text-white text-sm">
@@ -287,6 +289,7 @@
                                     <th class="pb-3 pr-4">Таймфрейм</th>
                                     <th class="pb-3 pr-4">Тип</th>
                                     <th class="pb-3 pr-4">Схожесть</th>
+                                    <th class="pb-3 pr-4">24ч</th>
                                     <th class="pb-3 pr-4">Превью</th>
                                     <th class="pb-3 pr-4">Время</th>
                                     <th class="pb-3 pr-2">График</th>
@@ -295,7 +298,7 @@
                             </thead>
                             <tbody id="matchesTable">
                                 <tr>
-                                    <td colspan="8" class="py-8 text-center text-gray-500">
+                                    <td colspan="9" class="py-8 text-center text-gray-500">
                                         Загрузите график и начните сканирование для поиска совпадений
                                     </td>
                                 </tr>
@@ -569,6 +572,12 @@
                 case 'symbol':
                     filtered.sort((a, b) => a.symbol.localeCompare(b.symbol));
                     break;
+                case 'top_gainers':
+                    filtered.sort((a, b) => (b.price_change_24h || 0) - (a.price_change_24h || 0));
+                    break;
+                case 'top_losers':
+                    filtered.sort((a, b) => (a.price_change_24h || 0) - (b.price_change_24h || 0));
+                    break;
             }
             
             return filtered;
@@ -584,7 +593,7 @@
             if (filteredMatches.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="8" class="py-8 text-center text-gray-500">
+                        <td colspan="9" class="py-8 text-center text-gray-500">
                             Совпадений пока не найдено
                         </td>
                     </tr>
@@ -612,6 +621,11 @@
                             </div>
                             <span class="text-sm">${match.similarity_score.toFixed(1)}%</span>
                         </div>
+                    </td>
+                    <td class="py-3 pr-4">
+                        <span class="text-sm font-medium ${(match.price_change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}">
+                            ${(match.price_change_24h || 0) >= 0 ? '+' : ''}${(match.price_change_24h || 0).toFixed(2)}%
+                        </span>
                     </td>
                     <td class="py-3 pr-4">
                         <canvas id="sparkline-${index}" class="sparkline"></canvas>
