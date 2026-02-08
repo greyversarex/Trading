@@ -854,8 +854,32 @@ async def get_upload(filename: str):
 @app.get("/api/chart/{symbol}/{timeframe}")
 async def get_chart_data(symbol: str, timeframe: str):
     """Get chart data for a symbol/timeframe."""
-    data = scanner.get_symbol_chart_data(symbol, timeframe)
-    return {"data": data}
+    lookup_symbols = [symbol]
+    if symbol.endswith("USDT"):
+        lookup_symbols.append(symbol[:-4])
+    else:
+        lookup_symbols.append(symbol + "USDT")
+
+    for sym in lookup_symbols:
+        data = scanner.get_symbol_chart_data(sym, timeframe)
+        if data:
+            return {"data": data}
+
+    resolve_sym = lookup_symbols[0]
+    if resolve_sym.endswith("USDT"):
+        base_sym = resolve_sym[:-4]
+    else:
+        base_sym = resolve_sym
+    candles = await scanner.fetch_candles(base_sym, timeframe, 100)
+    if candles:
+        from src.backend.binance_scanner import SymbolData
+        if base_sym not in scanner.symbol_data:
+            scanner.symbol_data[base_sym] = SymbolData(symbol=base_sym)
+        scanner.symbol_data[base_sym].candles[timeframe] = candles
+        data = scanner.get_symbol_chart_data(base_sym, timeframe)
+        return {"data": data}
+
+    return {"data": []}
 
 
 @app.websocket("/ws")
