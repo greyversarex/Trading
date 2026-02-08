@@ -1646,7 +1646,11 @@
         };
 
         function openTradingViewChart(symbol, timeframe) {
-            const tvSymbol = 'BINANCE:' + symbol.replace('/', '');
+            let cleanSymbol = symbol.replace('/', '');
+            if (!cleanSymbol.endsWith('USDT') && !cleanSymbol.endsWith('BTC') && !cleanSymbol.endsWith('BUSD') && !cleanSymbol.endsWith('ETH')) {
+                cleanSymbol = cleanSymbol + 'USDT';
+            }
+            const tvSymbol = 'BINANCE:' + cleanSymbol;
             const interval = timeframeToTvInterval[timeframe] || '60';
             
             document.getElementById('tvChartTitle').textContent = symbol;
