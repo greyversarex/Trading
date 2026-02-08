@@ -272,12 +272,13 @@
                                     <th class="pb-3 pr-4">Схожесть</th>
                                     <th class="pb-3 pr-4">Превью</th>
                                     <th class="pb-3 pr-4">Время</th>
+                                    <th class="pb-3 pr-2">График</th>
                                     <th class="pb-3">Оценка</th>
                                 </tr>
                             </thead>
                             <tbody id="matchesTable">
                                 <tr>
-                                    <td colspan="7" class="py-8 text-center text-gray-500">
+                                    <td colspan="8" class="py-8 text-center text-gray-500">
                                         Загрузите график и начните сканирование для поиска совпадений
                                     </td>
                                 </tr>
@@ -399,6 +400,32 @@
                     id="saveManualBtn" disabled>
                 Сохранить и Сканировать
             </button>
+        </div>
+    </div>
+
+    <div id="tvChartModal" class="fixed inset-0 bg-black/90 hidden items-center justify-center z-[60]" onclick="closeTvChart(event)">
+        <div class="bg-gray-900 rounded-lg w-[95vw] h-[90vh] mx-4 flex flex-col" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center px-4 py-3 border-b border-gray-700">
+                <div class="flex items-center gap-3">
+                    <h3 id="tvChartTitle" class="text-lg font-semibold text-white">BTC/USDT</h3>
+                    <span id="tvChartTimeframe" class="text-sm text-gray-400 bg-gray-700 px-2 py-0.5 rounded">1ч</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a id="tvChartLink" href="#" target="_blank" 
+                       class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                        <span>TradingView</span>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                        </svg>
+                    </a>
+                    <button onclick="closeTvChart()" class="text-gray-400 hover:text-white p-1">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div id="tvChartContainer" class="flex-1 overflow-hidden"></div>
         </div>
     </div>
 
@@ -529,7 +556,7 @@
             if (filteredMatches.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="7" class="py-8 text-center text-gray-500">
+                        <td colspan="8" class="py-8 text-center text-gray-500">
                             Совпадений пока не найдено
                         </td>
                     </tr>
@@ -563,6 +590,16 @@
                     </td>
                     <td class="py-3 pr-4 text-gray-400 text-sm">
                         ${new Date(match.timestamp).toLocaleTimeString('ru-RU')}
+                    </td>
+                    <td class="py-3 pr-2">
+                        <div onclick="event.stopPropagation()">
+                            <button onclick="openTradingViewChart('${match.symbol}', '${match.timeframe}')" 
+                                    class="p-1.5 hover:bg-blue-600/20 rounded text-blue-400 hover:text-blue-300 transition" title="Открыть график TradingView">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
+                                </svg>
+                            </button>
+                        </div>
                     </td>
                     <td class="py-3">
                         <div class="flex gap-1" onclick="event.stopPropagation()">
