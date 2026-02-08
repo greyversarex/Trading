@@ -19,6 +19,14 @@ class StructureType(str, Enum):
     BREAKOUT = "breakout"
     SQUEEZE_UP = "squeeze_up"
     SQUEEZE_DOWN = "squeeze_down"
+    DOUBLE_TOP = "double_top"
+    DOUBLE_BOTTOM = "double_bottom"
+    HEAD_SHOULDERS = "head_shoulders"
+    INV_HEAD_SHOULDERS = "inv_head_shoulders"
+    BULL_FLAG = "bull_flag"
+    BEAR_FLAG = "bear_flag"
+    RISING_WEDGE = "rising_wedge"
+    FALLING_WEDGE = "falling_wedge"
     UNKNOWN = "unknown"
 
 
@@ -359,6 +367,128 @@ class StructureExtractor:
         
         return False, ""
     
+    def _detect_double_top(self, pivots: List[PivotPoint], line: np.ndarray) -> bool:
+        highs = [p for p in pivots if p.is_high]
+        if len(highs) < 2:
+            return False
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False
+        for i in range(len(highs) - 1):
+            for j in range(i + 1, len(highs)):
+                diff = abs(highs[i].value - highs[j].value) / price_range
+                if diff < 0.08:
+                    between_lows = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[j].index]
+                    if between_lows:
+                        dip = min(p.value for p in between_lows)
+                        dip_depth = (highs[i].value - dip) / price_range
+                        if dip_depth > 0.15:
+                            return True
+        return False
+
+    def _detect_double_bottom(self, pivots: List[PivotPoint], line: np.ndarray) -> bool:
+        lows = [p for p in pivots if not p.is_high]
+        if len(lows) < 2:
+            return False
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False
+        for i in range(len(lows) - 1):
+            for j in range(i + 1, len(lows)):
+                diff = abs(lows[i].value - lows[j].value) / price_range
+                if diff < 0.08:
+                    between_highs = [p for p in pivots if p.is_high and lows[i].index < p.index < lows[j].index]
+                    if between_highs:
+                        peak = max(p.value for p in between_highs)
+                        peak_height = (peak - lows[i].value) / price_range
+                        if peak_height > 0.15:
+                            return True
+        return False
+
+    def _detect_head_shoulders(self, pivots: List[PivotPoint], line: np.ndarray) -> bool:
+        highs = [p for p in pivots if p.is_high]
+        if len(highs) < 3:
+            return False
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False
+        for i in range(len(highs) - 2):
+            left = highs[i].value
+            head = highs[i + 1].value
+            right = highs[i + 2].value
+            if head > left and head > right:
+                shoulder_diff = abs(left - right) / price_range
+                head_prominence = (head - max(left, right)) / price_range
+                if shoulder_diff < 0.15 and head_prominence > 0.08:
+                    return True
+        return False
+
+    def _detect_inv_head_shoulders(self, pivots: List[PivotPoint], line: np.ndarray) -> bool:
+        lows = [p for p in pivots if not p.is_high]
+        if len(lows) < 3:
+            return False
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False
+        for i in range(len(lows) - 2):
+            left = lows[i].value
+            head = lows[i + 1].value
+            right = lows[i + 2].value
+            if head < left and head < right:
+                shoulder_diff = abs(left - right) / price_range
+                head_prominence = (min(left, right) - head) / price_range
+                if shoulder_diff < 0.15 and head_prominence > 0.08:
+                    return True
+        return False
+
+    def _detect_flag(self, line: np.ndarray, pivots: List[PivotPoint]) -> Tuple[bool, str]:
+        n = len(line)
+        if n < 20:
+            return False, ""
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False, ""
+        split = int(n * 0.4)
+        pole = line[:split]
+        flag_part = line[split:]
+        pole_move = pole[-1] - pole[0]
+        pole_ratio = abs(pole_move) / price_range
+        if pole_ratio < 0.4:
+            return False, ""
+        flag_range = np.max(flag_part) - np.min(flag_part)
+        flag_ratio = flag_range / price_range
+        if flag_ratio > 0.4:
+            return False, ""
+        flag_trend = flag_part[-1] - flag_part[0]
+        if pole_move > 0 and flag_trend <= 0:
+            return True, "bull"
+        if pole_move < 0 and flag_trend >= 0:
+            return True, "bear"
+        return False, ""
+
+    def _detect_wedge(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, str]:
+        highs = [p for p in pivots if p.is_high]
+        lows = [p for p in pivots if not p.is_high]
+        if len(highs) < 2 or len(lows) < 2:
+            return False, ""
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False, ""
+        high_slope = (highs[-1].value - highs[0].value) / (highs[-1].index - highs[0].index + 1e-10)
+        low_slope = (lows[-1].value - lows[0].value) / (lows[-1].index - lows[0].index + 1e-10)
+        spread_start = abs(highs[0].value - lows[0].value) if highs and lows else 0
+        spread_end = abs(highs[-1].value - lows[-1].value) if highs and lows else 0
+        if spread_start == 0:
+            return False, ""
+        converging = spread_end < spread_start * 0.7
+        if not converging:
+            return False, ""
+        if high_slope > 0 and low_slope > 0:
+            return True, "rising"
+        if high_slope < 0 and low_slope < 0:
+            return True, "falling"
+        return False, ""
+
     def classify_structure(self, trend: float, compression: float, 
                           pivots: List[PivotPoint], line: np.ndarray) -> StructureType:
         is_impulse, impulse_dir = self._detect_impulse(line)
@@ -379,6 +509,30 @@ class StructureExtractor:
                 
                 if total_range > 0 and flat_range / total_range < 0.3 and spike_range / total_range > 0.5:
                     return StructureType.BREAKOUT
+        
+        is_flag, flag_dir = self._detect_flag(line, pivots)
+        if is_flag:
+            if flag_dir == "bull":
+                return StructureType.BULL_FLAG
+            else:
+                return StructureType.BEAR_FLAG
+        
+        if self._detect_head_shoulders(pivots, line):
+            return StructureType.HEAD_SHOULDERS
+        if self._detect_inv_head_shoulders(pivots, line):
+            return StructureType.INV_HEAD_SHOULDERS
+        
+        if self._detect_double_top(pivots, line):
+            return StructureType.DOUBLE_TOP
+        if self._detect_double_bottom(pivots, line):
+            return StructureType.DOUBLE_BOTTOM
+        
+        is_wedge, wedge_dir = self._detect_wedge(pivots, line)
+        if is_wedge:
+            if wedge_dir == "rising":
+                return StructureType.RISING_WEDGE
+            else:
+                return StructureType.FALLING_WEDGE
         
         if len(pivots) >= 4:
             highs = [p.value for p in pivots if p.is_high]

@@ -110,6 +110,38 @@
                             <div class="font-medium">Ретест</div>
                             <div class="text-xs text-gray-400">Возврат к уровню</div>
                         </button>
+                        <button onclick="startTypeScan('double_top')" class="type-scan-btn bg-gray-700 hover:bg-red-500 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Двойная вершина</div>
+                            <div class="text-xs text-gray-400">Два одинаковых максимума</div>
+                        </button>
+                        <button onclick="startTypeScan('double_bottom')" class="type-scan-btn bg-gray-700 hover:bg-green-500 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Двойное дно</div>
+                            <div class="text-xs text-gray-400">Два одинаковых минимума</div>
+                        </button>
+                        <button onclick="startTypeScan('head_shoulders')" class="type-scan-btn bg-gray-700 hover:bg-rose-500 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Голова и плечи</div>
+                            <div class="text-xs text-gray-400">Разворот вниз</div>
+                        </button>
+                        <button onclick="startTypeScan('inv_head_shoulders')" class="type-scan-btn bg-gray-700 hover:bg-emerald-500 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Обратная ГиП</div>
+                            <div class="text-xs text-gray-400">Разворот вверх</div>
+                        </button>
+                        <button onclick="startTypeScan('bull_flag')" class="type-scan-btn bg-gray-700 hover:bg-teal-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Бычий флаг</div>
+                            <div class="text-xs text-gray-400">Импульс + коррекция вниз</div>
+                        </button>
+                        <button onclick="startTypeScan('bear_flag')" class="type-scan-btn bg-gray-700 hover:bg-pink-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Медвежий флаг</div>
+                            <div class="text-xs text-gray-400">Импульс + коррекция вверх</div>
+                        </button>
+                        <button onclick="startTypeScan('rising_wedge')" class="type-scan-btn bg-gray-700 hover:bg-amber-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Восходящий клин</div>
+                            <div class="text-xs text-gray-400">Сужение вверх (медвежий)</div>
+                        </button>
+                        <button onclick="startTypeScan('falling_wedge')" class="type-scan-btn bg-gray-700 hover:bg-sky-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Нисходящий клин</div>
+                            <div class="text-xs text-gray-400">Сужение вниз (бычий)</div>
+                        </button>
                     </div>
                 </div>
 
@@ -136,6 +168,15 @@
                     <div id="gallery" class="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto">
                         <p class="col-span-2 text-gray-500 text-center py-4">Нет загруженных структур</p>
                     </div>
+                </div>
+
+                <div id="typeScanInfo" class="bg-gray-800 rounded-lg p-6 hidden">
+                    <h2 class="text-xl font-semibold mb-4">Поиск по Типу</h2>
+                    <div class="bg-gray-700 rounded p-4">
+                        <div class="text-gray-300 mb-1">Ищем: <span id="typeScanName" class="text-white font-bold text-lg"></span></div>
+                        <div class="text-xs text-gray-400">Сканируем все пары и таймфреймы</div>
+                    </div>
+                    <div id="typeScanDescription" class="mt-3 text-sm text-gray-400"></div>
                 </div>
 
                 <div id="structureInfo" class="bg-gray-800 rounded-lg p-6 hidden">
@@ -266,6 +307,14 @@
                                 <option value="impulse_up">Импульс вверх</option>
                                 <option value="impulse_down">Импульс вниз</option>
                                 <option value="breakout">Пробой</option>
+                                <option value="double_top">Двойная вершина</option>
+                                <option value="double_bottom">Двойное дно</option>
+                                <option value="head_shoulders">Голова и плечи</option>
+                                <option value="inv_head_shoulders">Обратная ГиП</option>
+                                <option value="bull_flag">Бычий флаг</option>
+                                <option value="bear_flag">Медвежий флаг</option>
+                                <option value="rising_wedge">Восходящий клин</option>
+                                <option value="falling_wedge">Нисходящий клин</option>
                             </select>
                             <select id="sortBy" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
                                 <option value="similarity">По схожести</option>
@@ -492,6 +541,14 @@
             'breakout': 'Пробой',
             'squeeze_up': 'Поджатие вверх',
             'squeeze_down': 'Поджатие вниз',
+            'double_top': 'Двойная вершина',
+            'double_bottom': 'Двойное дно',
+            'head_shoulders': 'Голова и плечи',
+            'inv_head_shoulders': 'Обратная ГиП',
+            'bull_flag': 'Бычий флаг',
+            'bear_flag': 'Медвежий флаг',
+            'rising_wedge': 'Восходящий клин',
+            'falling_wedge': 'Нисходящий клин',
             'unknown': 'Неизвестно'
         };
 
@@ -1061,6 +1118,14 @@
                 'impulse_up': 'bg-lime-600',
                 'impulse_down': 'bg-rose-600',
                 'breakout': 'bg-cyan-600',
+                'double_top': 'bg-red-500',
+                'double_bottom': 'bg-green-500',
+                'head_shoulders': 'bg-rose-500',
+                'inv_head_shoulders': 'bg-emerald-500',
+                'bull_flag': 'bg-teal-600',
+                'bear_flag': 'bg-pink-600',
+                'rising_wedge': 'bg-amber-600',
+                'falling_wedge': 'bg-sky-600',
                 'unknown': 'bg-gray-600'
             };
             return colors[type] || 'bg-gray-600';
@@ -1122,6 +1187,7 @@
         }
 
         function showStructureInfo(data) {
+            document.getElementById('typeScanInfo').classList.add('hidden');
             const info = document.getElementById('structureInfo');
             info.classList.remove('hidden');
             
@@ -1322,6 +1388,29 @@
             }
         }
 
+        const typeDescriptions = {
+            'squeeze_up': 'Плоские максимумы + растущие минимумы. Цена поджимается к сопротивлению.',
+            'squeeze_down': 'Плоские минимумы + падающие максимумы. Цена поджимается к поддержке.',
+            'triangle': 'Сходящийся треугольник — падающие максимумы и растущие минимумы.',
+            'compression': 'Волатильность снижается, диапазон сужается.',
+            'range': 'Боковое движение в горизонтальном канале.',
+            'breakout': 'Резкий выход из зоны консолидации.',
+            'impulse_up': 'Сильное резкое движение вверх.',
+            'impulse_down': 'Сильное резкое движение вниз.',
+            'trend_up': 'Устойчивый восходящий тренд.',
+            'trend_down': 'Устойчивый нисходящий тренд.',
+            'accumulation': 'Боковое движение с признаками накопления.',
+            'retest': 'Возврат цены к ранее пробитому уровню.',
+            'double_top': 'Два одинаковых максимума — разворот вниз.',
+            'double_bottom': 'Два одинаковых минимума — разворот вверх.',
+            'head_shoulders': 'Три вершины, средняя выше — разворот вниз.',
+            'inv_head_shoulders': 'Три впадины, средняя ниже — разворот вверх.',
+            'bull_flag': 'Сильный импульс вверх + нисходящая коррекция.',
+            'bear_flag': 'Сильный импульс вниз + восходящая коррекция.',
+            'rising_wedge': 'Сужающийся канал вверх — медвежий сигнал.',
+            'falling_wedge': 'Сужающийся канал вниз — бычий сигнал.'
+        };
+
         async function startTypeScan(structureType) {
             try {
                 matches = [];
@@ -1331,24 +1420,13 @@
                 highlightActiveTypeBtn(structureType);
                 
                 const typeName = structureTypeLabels[structureType] || structureType;
-                const uploadedImg = document.getElementById('uploadedImage');
-                if (uploadedImg) uploadedImg.classList.add('hidden');
                 
-                const infoDiv = document.getElementById('structureInfo');
-                if (infoDiv) {
-                    infoDiv.innerHTML = `
-                        <div class="text-sm">
-                            <div class="flex items-center gap-2 mb-2">
-                                <span class="text-lg font-bold text-blue-400">Поиск по типу</span>
-                            </div>
-                            <div class="bg-gray-700 rounded p-3">
-                                <div class="text-gray-300">Ищем: <span class="text-white font-medium">${typeName}</span></div>
-                                <div class="text-xs text-gray-400 mt-1">Сканируем все пары и таймфреймы</div>
-                            </div>
-                        </div>
-                    `;
-                    infoDiv.classList.remove('hidden');
-                }
+                document.getElementById('structureInfo').classList.add('hidden');
+                
+                const typeScanDiv = document.getElementById('typeScanInfo');
+                document.getElementById('typeScanName').textContent = typeName;
+                document.getElementById('typeScanDescription').textContent = typeDescriptions[structureType] || '';
+                typeScanDiv.classList.remove('hidden');
                 
                 const response = await fetch('/api/start-scan', {
                     method: 'POST',
