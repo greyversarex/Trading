@@ -15,6 +15,7 @@ from .structure_extractor import StructureExtractor, StructureFeatures
 from .similarity_matcher import SimilarityMatcher, MatchResult
 from .binance_scanner import BinanceScanner
 from .database import Database
+from .candle_patterns import CandlePatternDetector, CandlePatternType
 
 
 app = FastAPI(title="Chart Structure Scanner")
@@ -32,6 +33,7 @@ structure_extractor = StructureExtractor()
 similarity_matcher = SimilarityMatcher()
 scanner = BinanceScanner(num_symbols=50)
 database = Database()
+candle_detector = CandlePatternDetector()
 
 active_websockets: List[WebSocket] = []
 current_reference: Optional[StructureFeatures] = None
@@ -39,10 +41,12 @@ current_structure_id: Optional[int] = None
 scan_threshold: float = 50.0
 is_scanning: bool = False
 scan_task: Optional[asyncio.Task] = None
-search_mode: str = "preset"  # "preset", "uploaded", "manual", or "type_scan"
+search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", or "candle_scan"
 search_pattern_type: Optional[str] = None
 search_type_filter: Optional[str] = None
+search_candle_filter: Optional[str] = None
 type_scan_seen: set = set()
+candle_scan_seen: set = set()
 
 
 class ThresholdUpdate(BaseModel):
@@ -60,10 +64,11 @@ class PresetRequest(BaseModel):
 
 
 class StartScanRequest(BaseModel):
-    mode: str = "preset"  # "preset", "uploaded", "manual", or "type_scan"
+    mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", or "candle_scan"
     pattern_type: Optional[str] = None
     structure_id: Optional[int] = None
     type_filter: Optional[str] = None
+    candle_filter: Optional[str] = None
 
 
 class ManualPivot(BaseModel):
@@ -102,10 +107,14 @@ async def broadcast_message(message: dict):
 
 async def on_market_update(symbol: str, timeframe: str):
     """Callback when market data updates."""
-    global current_reference, scan_threshold, search_mode, search_type_filter
+    global current_reference, scan_threshold, search_mode, search_type_filter, search_candle_filter
     
     if search_mode == "type_scan":
         await on_market_update_type_scan(symbol, timeframe)
+        return
+    
+    if search_mode == "candle_scan":
+        await on_market_update_candle_scan(symbol, timeframe)
         return
     
     if current_reference is None:
@@ -179,6 +188,95 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
             })
 
 
+async def on_market_update_candle_scan(symbol: str, timeframe: str):
+    """Callback for candle-pattern scanning."""
+    global search_candle_filter, candle_scan_seen
+    
+    if not search_candle_filter:
+        return
+    
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles or len(candles) < 5:
+        return
+    
+    patterns = candle_detector.detect_all(candles)
+    for pat in patterns:
+        if pat.value == search_candle_filter:
+            key = f"{symbol}_{timeframe}"
+            if key in candle_scan_seen:
+                continue
+            candle_scan_seen.add(key)
+            
+            closes = [c.close for c in candles[-50:]] if len(candles) >= 50 else [c.close for c in candles]
+            mn, mx = min(closes), max(closes)
+            rng = mx - mn if mx > mn else 1
+            normalized = [(v - mn) / rng for v in closes]
+            
+            await broadcast_message({
+                "type": "match",
+                "data": {
+                    "match_id": None,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "similarity_score": 100.0,
+                    "structure_type": pat.value,
+                    "timestamp": datetime.now().isoformat(),
+                    "is_mirrored": False,
+                    "normalized_line": normalized,
+                    "price_change_24h": scanner.price_change_24h.get(symbol, 0)
+                }
+            })
+
+
+async def run_initial_candle_scan():
+    """Run initial scan for candle patterns across all symbols/timeframes."""
+    global search_candle_filter, candle_scan_seen
+    
+    if not search_candle_filter:
+        return
+    
+    match_count = 0
+    
+    for symbol, sym_data in scanner.symbol_data.items():
+        for timeframe, candles in sym_data.candles.items():
+            if not candles or len(candles) < 5:
+                continue
+            
+            patterns = candle_detector.detect_all(candles)
+            for pat in patterns:
+                if pat.value == search_candle_filter:
+                    key = f"{symbol}_{timeframe}"
+                    if key in candle_scan_seen:
+                        continue
+                    candle_scan_seen.add(key)
+                    match_count += 1
+                    
+                    closes = [c.close for c in candles[-50:]] if len(candles) >= 50 else [c.close for c in candles]
+                    mn, mx = min(closes), max(closes)
+                    rng = mx - mn if mx > mn else 1
+                    normalized = [(v - mn) / rng for v in closes]
+                    
+                    await broadcast_message({
+                        "type": "match",
+                        "data": {
+                            "match_id": None,
+                            "symbol": symbol,
+                            "timeframe": timeframe,
+                            "similarity_score": 100.0,
+                            "structure_type": pat.value,
+                            "timestamp": datetime.now().isoformat(),
+                            "is_mirrored": False,
+                            "normalized_line": normalized,
+                            "price_change_24h": scanner.price_change_24h.get(symbol, 0)
+                        }
+                    })
+    
+    await broadcast_message({
+        "type": "initial_scan_complete",
+        "data": {"total_matches": match_count}
+    })
+
+
 async def run_continuous_scan():
     """Run continuous market scanning."""
     global is_scanning
@@ -193,10 +291,14 @@ async def run_continuous_scan():
 
 async def run_initial_scan():
     """Run initial scan against all current structures."""
-    global current_reference, scan_threshold, current_structure_id, search_mode, search_type_filter
+    global current_reference, scan_threshold, current_structure_id, search_mode, search_type_filter, search_candle_filter
     
     if search_mode == "type_scan":
         await run_initial_type_scan()
+        return
+    
+    if search_mode == "candle_scan":
+        await run_initial_candle_scan()
         return
     
     if current_reference is None:
@@ -509,7 +611,7 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen
+    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen
     
     if data is None:
         data = StartScanRequest()
@@ -517,9 +619,17 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     search_mode = data.mode
     search_pattern_type = data.pattern_type
     search_type_filter = data.type_filter
+    search_candle_filter = data.candle_filter
     type_scan_seen = set()
+    candle_scan_seen = set()
     
-    if data.mode == "type_scan":
+    if data.mode == "candle_scan":
+        if data.candle_filter is None:
+            raise HTTPException(status_code=400, detail="candle_filter required for candle_scan mode")
+        current_reference = None
+        current_structure_id = None
+    
+    elif data.mode == "type_scan":
         if data.type_filter is None:
             raise HTTPException(status_code=400, detail="type_filter required for type_scan mode")
         current_reference = None
@@ -554,7 +664,7 @@ async def start_scan(data: Optional[StartScanRequest] = None):
         if current_reference is None:
             raise HTTPException(status_code=400, detail="No manual structure created. Create one first.")
     else:
-        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', 'manual', or 'type_scan'")
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', 'manual', 'type_scan', or 'candle_scan'")
     
     if is_scanning:
         await stop_scan()

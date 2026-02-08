@@ -350,6 +350,12 @@ class BinanceScanner:
         
         return results
     
+    def get_candles(self, symbol: str, timeframe: str):
+        """Get raw candle data for a symbol/timeframe."""
+        if symbol not in self.symbol_data:
+            return []
+        return self.symbol_data[symbol].candles.get(timeframe, [])
+    
     def get_symbol_chart_data(self, symbol: str, timeframe: str) -> List[dict]:
         """Get candle data for chart display."""
         if symbol not in self.symbol_data:

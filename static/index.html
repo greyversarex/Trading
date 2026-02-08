@@ -59,89 +59,181 @@
                 </div>
 
                 <div class="bg-gray-800 rounded-lg p-6">
-                    <h2 class="text-xl font-semibold mb-4">Поиск по Типу</h2>
-                    <p class="text-xs text-gray-400 mb-3">Сканирует рынок и показывает графики с выбранным типом структуры</p>
-                    <div class="grid grid-cols-2 gap-2">
-                        <button onclick="startTypeScan('squeeze_up')" class="type-scan-btn bg-gray-700 hover:bg-emerald-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Поджатие ↑</div>
-                            <div class="text-xs text-gray-400">К сопротивлению</div>
-                        </button>
-                        <button onclick="startTypeScan('squeeze_down')" class="type-scan-btn bg-gray-700 hover:bg-rose-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Поджатие ↓</div>
-                            <div class="text-xs text-gray-400">К поддержке</div>
-                        </button>
-                        <button onclick="startTypeScan('triangle')" class="type-scan-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Треугольник</div>
-                            <div class="text-xs text-gray-400">Сходящийся</div>
-                        </button>
-                        <button onclick="startTypeScan('compression')" class="type-scan-btn bg-gray-700 hover:bg-yellow-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Сжатие</div>
-                            <div class="text-xs text-gray-400">Консолидация</div>
-                        </button>
-                        <button onclick="startTypeScan('trend_up')" class="type-scan-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Тренд ↑</div>
-                            <div class="text-xs text-gray-400">Бычий</div>
-                        </button>
-                        <button onclick="startTypeScan('trend_down')" class="type-scan-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Тренд ↓</div>
-                            <div class="text-xs text-gray-400">Медвежий</div>
-                        </button>
-                        <button onclick="startTypeScan('range')" class="type-scan-btn bg-gray-700 hover:bg-blue-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Диапазон</div>
-                            <div class="text-xs text-gray-400">Боковик</div>
-                        </button>
-                        <button onclick="startTypeScan('breakout')" class="type-scan-btn bg-gray-700 hover:bg-orange-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Пробой</div>
-                            <div class="text-xs text-gray-400">Выход из диапазона</div>
-                        </button>
-                        <button onclick="startTypeScan('impulse_up')" class="type-scan-btn bg-gray-700 hover:bg-green-700 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Импульс ↑</div>
-                            <div class="text-xs text-gray-400">Резкий рост</div>
-                        </button>
-                        <button onclick="startTypeScan('impulse_down')" class="type-scan-btn bg-gray-700 hover:bg-red-700 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Импульс ↓</div>
-                            <div class="text-xs text-gray-400">Резкое падение</div>
-                        </button>
-                        <button onclick="startTypeScan('accumulation')" class="type-scan-btn bg-gray-700 hover:bg-cyan-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Накопление</div>
-                            <div class="text-xs text-gray-400">Боковое движение</div>
-                        </button>
-                        <button onclick="startTypeScan('retest')" class="type-scan-btn bg-gray-700 hover:bg-indigo-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Ретест</div>
-                            <div class="text-xs text-gray-400">Возврат к уровню</div>
-                        </button>
-                        <button onclick="startTypeScan('double_top')" class="type-scan-btn bg-gray-700 hover:bg-red-500 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Двойная вершина</div>
-                            <div class="text-xs text-gray-400">Два одинаковых максимума</div>
-                        </button>
-                        <button onclick="startTypeScan('double_bottom')" class="type-scan-btn bg-gray-700 hover:bg-green-500 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Двойное дно</div>
-                            <div class="text-xs text-gray-400">Два одинаковых минимума</div>
-                        </button>
-                        <button onclick="startTypeScan('head_shoulders')" class="type-scan-btn bg-gray-700 hover:bg-rose-500 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Голова и плечи</div>
-                            <div class="text-xs text-gray-400">Разворот вниз</div>
-                        </button>
-                        <button onclick="startTypeScan('inv_head_shoulders')" class="type-scan-btn bg-gray-700 hover:bg-emerald-500 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Обратная ГиП</div>
-                            <div class="text-xs text-gray-400">Разворот вверх</div>
-                        </button>
-                        <button onclick="startTypeScan('bull_flag')" class="type-scan-btn bg-gray-700 hover:bg-teal-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Бычий флаг</div>
-                            <div class="text-xs text-gray-400">Импульс + коррекция вниз</div>
-                        </button>
-                        <button onclick="startTypeScan('bear_flag')" class="type-scan-btn bg-gray-700 hover:bg-pink-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Медвежий флаг</div>
-                            <div class="text-xs text-gray-400">Импульс + коррекция вверх</div>
-                        </button>
-                        <button onclick="startTypeScan('rising_wedge')" class="type-scan-btn bg-gray-700 hover:bg-amber-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Восходящий клин</div>
-                            <div class="text-xs text-gray-400">Сужение вверх (медвежий)</div>
-                        </button>
-                        <button onclick="startTypeScan('falling_wedge')" class="type-scan-btn bg-gray-700 hover:bg-sky-600 p-3 rounded-lg text-sm text-left transition">
-                            <div class="font-medium">Нисходящий клин</div>
-                            <div class="text-xs text-gray-400">Сужение вниз (бычий)</div>
-                        </button>
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold">Поиск Паттернов</h2>
+                        <select id="patternModeSelect" onchange="switchPatternMode(this.value)" 
+                                class="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500">
+                            <option value="structure">Структуры</option>
+                            <option value="candle">Свечные</option>
+                        </select>
+                    </div>
+
+                    <div id="structurePatterns">
+                        <p class="text-xs text-gray-400 mb-3">Сканирует рынок по типу ценовой структуры</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="startTypeScan('squeeze_up')" class="type-scan-btn bg-gray-700 hover:bg-emerald-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Поджатие ↑</div>
+                                <div class="text-xs text-gray-400">К сопротивлению</div>
+                            </button>
+                            <button onclick="startTypeScan('squeeze_down')" class="type-scan-btn bg-gray-700 hover:bg-rose-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Поджатие ↓</div>
+                                <div class="text-xs text-gray-400">К поддержке</div>
+                            </button>
+                            <button onclick="startTypeScan('triangle')" class="type-scan-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Треугольник</div>
+                                <div class="text-xs text-gray-400">Сходящийся</div>
+                            </button>
+                            <button onclick="startTypeScan('compression')" class="type-scan-btn bg-gray-700 hover:bg-yellow-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Сжатие</div>
+                                <div class="text-xs text-gray-400">Консолидация</div>
+                            </button>
+                            <button onclick="startTypeScan('trend_up')" class="type-scan-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Тренд ↑</div>
+                                <div class="text-xs text-gray-400">Бычий</div>
+                            </button>
+                            <button onclick="startTypeScan('trend_down')" class="type-scan-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Тренд ↓</div>
+                                <div class="text-xs text-gray-400">Медвежий</div>
+                            </button>
+                            <button onclick="startTypeScan('range')" class="type-scan-btn bg-gray-700 hover:bg-blue-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Диапазон</div>
+                                <div class="text-xs text-gray-400">Боковик</div>
+                            </button>
+                            <button onclick="startTypeScan('breakout')" class="type-scan-btn bg-gray-700 hover:bg-orange-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Пробой</div>
+                                <div class="text-xs text-gray-400">Выход из диапазона</div>
+                            </button>
+                            <button onclick="startTypeScan('impulse_up')" class="type-scan-btn bg-gray-700 hover:bg-green-700 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Импульс ↑</div>
+                                <div class="text-xs text-gray-400">Резкий рост</div>
+                            </button>
+                            <button onclick="startTypeScan('impulse_down')" class="type-scan-btn bg-gray-700 hover:bg-red-700 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Импульс ↓</div>
+                                <div class="text-xs text-gray-400">Резкое падение</div>
+                            </button>
+                            <button onclick="startTypeScan('accumulation')" class="type-scan-btn bg-gray-700 hover:bg-cyan-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Накопление</div>
+                                <div class="text-xs text-gray-400">Боковое движение</div>
+                            </button>
+                            <button onclick="startTypeScan('retest')" class="type-scan-btn bg-gray-700 hover:bg-indigo-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Ретест</div>
+                                <div class="text-xs text-gray-400">Возврат к уровню</div>
+                            </button>
+                            <button onclick="startTypeScan('double_top')" class="type-scan-btn bg-gray-700 hover:bg-red-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Двойная вершина</div>
+                                <div class="text-xs text-gray-400">Два одинаковых максимума</div>
+                            </button>
+                            <button onclick="startTypeScan('double_bottom')" class="type-scan-btn bg-gray-700 hover:bg-green-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Двойное дно</div>
+                                <div class="text-xs text-gray-400">Два одинаковых минимума</div>
+                            </button>
+                            <button onclick="startTypeScan('head_shoulders')" class="type-scan-btn bg-gray-700 hover:bg-rose-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Голова и плечи</div>
+                                <div class="text-xs text-gray-400">Разворот вниз</div>
+                            </button>
+                            <button onclick="startTypeScan('inv_head_shoulders')" class="type-scan-btn bg-gray-700 hover:bg-emerald-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Обратная ГиП</div>
+                                <div class="text-xs text-gray-400">Разворот вверх</div>
+                            </button>
+                            <button onclick="startTypeScan('bull_flag')" class="type-scan-btn bg-gray-700 hover:bg-teal-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Бычий флаг</div>
+                                <div class="text-xs text-gray-400">Импульс + коррекция вниз</div>
+                            </button>
+                            <button onclick="startTypeScan('bear_flag')" class="type-scan-btn bg-gray-700 hover:bg-pink-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Медвежий флаг</div>
+                                <div class="text-xs text-gray-400">Импульс + коррекция вверх</div>
+                            </button>
+                            <button onclick="startTypeScan('rising_wedge')" class="type-scan-btn bg-gray-700 hover:bg-amber-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Восходящий клин</div>
+                                <div class="text-xs text-gray-400">Сужение вверх (медвежий)</div>
+                            </button>
+                            <button onclick="startTypeScan('falling_wedge')" class="type-scan-btn bg-gray-700 hover:bg-sky-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Нисходящий клин</div>
+                                <div class="text-xs text-gray-400">Сужение вниз (бычий)</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="candlePatterns" class="hidden">
+                        <p class="text-xs text-gray-400 mb-3">Сканирует рынок по свечным паттернам на последних свечах</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="startCandleScan('doji')" class="candle-scan-btn bg-gray-700 hover:bg-gray-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Доджи</div>
+                                <div class="text-xs text-gray-400">Неопределённость</div>
+                            </button>
+                            <button onclick="startCandleScan('hammer')" class="candle-scan-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Молот</div>
+                                <div class="text-xs text-gray-400">Разворот вверх</div>
+                            </button>
+                            <button onclick="startCandleScan('inverted_hammer')" class="candle-scan-btn bg-gray-700 hover:bg-green-700 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Перевёрн. молот</div>
+                                <div class="text-xs text-gray-400">Потенц. разворот вверх</div>
+                            </button>
+                            <button onclick="startCandleScan('shooting_star')" class="candle-scan-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Падающая звезда</div>
+                                <div class="text-xs text-gray-400">Разворот вниз</div>
+                            </button>
+                            <button onclick="startCandleScan('engulfing_bull')" class="candle-scan-btn bg-gray-700 hover:bg-emerald-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Бычье поглощение</div>
+                                <div class="text-xs text-gray-400">Сильный разворот вверх</div>
+                            </button>
+                            <button onclick="startCandleScan('engulfing_bear')" class="candle-scan-btn bg-gray-700 hover:bg-rose-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Медв. поглощение</div>
+                                <div class="text-xs text-gray-400">Сильный разворот вниз</div>
+                            </button>
+                            <button onclick="startCandleScan('morning_star')" class="candle-scan-btn bg-gray-700 hover:bg-green-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Утренняя звезда</div>
+                                <div class="text-xs text-gray-400">Разворот вверх (3 свечи)</div>
+                            </button>
+                            <button onclick="startCandleScan('evening_star')" class="candle-scan-btn bg-gray-700 hover:bg-red-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Вечерняя звезда</div>
+                                <div class="text-xs text-gray-400">Разворот вниз (3 свечи)</div>
+                            </button>
+                            <button onclick="startCandleScan('three_white_soldiers')" class="candle-scan-btn bg-gray-700 hover:bg-emerald-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">3 белых солдата</div>
+                                <div class="text-xs text-gray-400">Сильный бычий сигнал</div>
+                            </button>
+                            <button onclick="startCandleScan('three_black_crows')" class="candle-scan-btn bg-gray-700 hover:bg-rose-500 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">3 чёрных вороны</div>
+                                <div class="text-xs text-gray-400">Сильный медвежий</div>
+                            </button>
+                            <button onclick="startCandleScan('harami_bull')" class="candle-scan-btn bg-gray-700 hover:bg-teal-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Бычий харами</div>
+                                <div class="text-xs text-gray-400">Малая свеча в большой</div>
+                            </button>
+                            <button onclick="startCandleScan('harami_bear')" class="candle-scan-btn bg-gray-700 hover:bg-pink-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Медвежий харами</div>
+                                <div class="text-xs text-gray-400">Малая свеча в большой</div>
+                            </button>
+                            <button onclick="startCandleScan('piercing_line')" class="candle-scan-btn bg-gray-700 hover:bg-cyan-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Пронизывающая</div>
+                                <div class="text-xs text-gray-400">Бычий разворот</div>
+                            </button>
+                            <button onclick="startCandleScan('dark_cloud')" class="candle-scan-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Тёмная завеса</div>
+                                <div class="text-xs text-gray-400">Медвежий разворот</div>
+                            </button>
+                            <button onclick="startCandleScan('spinning_top')" class="candle-scan-btn bg-gray-700 hover:bg-yellow-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Волчок</div>
+                                <div class="text-xs text-gray-400">Нерешительность</div>
+                            </button>
+                            <button onclick="startCandleScan('marubozu_bull')" class="candle-scan-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Марубозу ↑</div>
+                                <div class="text-xs text-gray-400">Полное тело, бычий</div>
+                            </button>
+                            <button onclick="startCandleScan('marubozu_bear')" class="candle-scan-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Марубозу ↓</div>
+                                <div class="text-xs text-gray-400">Полное тело, медвежий</div>
+                            </button>
+                            <button onclick="startCandleScan('tweezer_top')" class="candle-scan-btn bg-gray-700 hover:bg-orange-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Пинцет верх</div>
+                                <div class="text-xs text-gray-400">Два одинак. максимума</div>
+                            </button>
+                            <button onclick="startCandleScan('tweezer_bottom')" class="candle-scan-btn bg-gray-700 hover:bg-blue-600 p-3 rounded-lg text-sm text-left transition">
+                                <div class="font-medium">Пинцет низ</div>
+                                <div class="text-xs text-gray-400">Два одинак. минимума</div>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -171,7 +263,7 @@
                 </div>
 
                 <div id="typeScanInfo" class="bg-gray-800 rounded-lg p-6 hidden">
-                    <h2 class="text-xl font-semibold mb-4">Поиск по Типу</h2>
+                    <h2 class="text-xl font-semibold mb-4">Поиск Паттерна</h2>
                     <div class="bg-gray-700 rounded p-4">
                         <div class="text-gray-300 mb-1">Ищем: <span id="typeScanName" class="text-white font-bold text-lg"></span></div>
                         <div class="text-xs text-gray-400">Сканируем все пары и таймфреймы</div>
@@ -315,6 +407,26 @@
                                 <option value="bear_flag">Медвежий флаг</option>
                                 <option value="rising_wedge">Восходящий клин</option>
                                 <option value="falling_wedge">Нисходящий клин</option>
+                                <option disabled>── Свечные ──</option>
+                                <option value="doji">Доджи</option>
+                                <option value="hammer">Молот</option>
+                                <option value="inverted_hammer">Перевёрн. молот</option>
+                                <option value="shooting_star">Падающая звезда</option>
+                                <option value="engulfing_bull">Бычье поглощение</option>
+                                <option value="engulfing_bear">Медв. поглощение</option>
+                                <option value="morning_star">Утренняя звезда</option>
+                                <option value="evening_star">Вечерняя звезда</option>
+                                <option value="three_white_soldiers">3 белых солдата</option>
+                                <option value="three_black_crows">3 чёрных вороны</option>
+                                <option value="harami_bull">Бычий харами</option>
+                                <option value="harami_bear">Медвежий харами</option>
+                                <option value="piercing_line">Пронизывающая</option>
+                                <option value="dark_cloud">Тёмная завеса</option>
+                                <option value="spinning_top">Волчок</option>
+                                <option value="marubozu_bull">Марубозу ↑</option>
+                                <option value="marubozu_bear">Марубозу ↓</option>
+                                <option value="tweezer_top">Пинцет верх</option>
+                                <option value="tweezer_bottom">Пинцет низ</option>
                             </select>
                             <select id="sortBy" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
                                 <option value="similarity">По схожести</option>
@@ -549,6 +661,25 @@
             'bear_flag': 'Медвежий флаг',
             'rising_wedge': 'Восходящий клин',
             'falling_wedge': 'Нисходящий клин',
+            'doji': 'Доджи',
+            'hammer': 'Молот',
+            'inverted_hammer': 'Перевёрн. молот',
+            'shooting_star': 'Падающая звезда',
+            'spinning_top': 'Волчок',
+            'marubozu_bull': 'Марубозу ↑',
+            'marubozu_bear': 'Марубозу ↓',
+            'engulfing_bull': 'Бычье поглощение',
+            'engulfing_bear': 'Медв. поглощение',
+            'morning_star': 'Утренняя звезда',
+            'evening_star': 'Вечерняя звезда',
+            'three_white_soldiers': '3 белых солдата',
+            'three_black_crows': '3 чёрных вороны',
+            'harami_bull': 'Бычий харами',
+            'harami_bear': 'Медвежий харами',
+            'piercing_line': 'Пронизывающая',
+            'dark_cloud': 'Тёмная завеса',
+            'tweezer_top': 'Пинцет верх',
+            'tweezer_bottom': 'Пинцет низ',
             'unknown': 'Неизвестно'
         };
 
@@ -1126,6 +1257,25 @@
                 'bear_flag': 'bg-pink-600',
                 'rising_wedge': 'bg-amber-600',
                 'falling_wedge': 'bg-sky-600',
+                'doji': 'bg-gray-500',
+                'hammer': 'bg-green-600',
+                'inverted_hammer': 'bg-green-700',
+                'shooting_star': 'bg-red-600',
+                'spinning_top': 'bg-yellow-600',
+                'marubozu_bull': 'bg-green-600',
+                'marubozu_bear': 'bg-red-600',
+                'engulfing_bull': 'bg-emerald-600',
+                'engulfing_bear': 'bg-rose-600',
+                'morning_star': 'bg-green-500',
+                'evening_star': 'bg-red-500',
+                'three_white_soldiers': 'bg-emerald-500',
+                'three_black_crows': 'bg-rose-500',
+                'harami_bull': 'bg-teal-600',
+                'harami_bear': 'bg-pink-600',
+                'piercing_line': 'bg-cyan-600',
+                'dark_cloud': 'bg-purple-600',
+                'tweezer_top': 'bg-orange-600',
+                'tweezer_bottom': 'bg-blue-600',
                 'unknown': 'bg-gray-600'
             };
             return colors[type] || 'bg-gray-600';
@@ -1410,6 +1560,88 @@
             'rising_wedge': 'Сужающийся канал вверх — медвежий сигнал.',
             'falling_wedge': 'Сужающийся канал вниз — бычий сигнал.'
         };
+
+        const candleDescriptions = {
+            'doji': 'Тело почти отсутствует. Покупатели и продавцы в равновесии.',
+            'hammer': 'Длинная нижняя тень, маленькое тело вверху. Сигнал разворота вверх.',
+            'inverted_hammer': 'Длинная верхняя тень, маленькое тело внизу. Потенциальный разворот вверх.',
+            'shooting_star': 'Длинная верхняя тень, маленькое медвежье тело. Разворот вниз.',
+            'spinning_top': 'Маленькое тело, примерно равные тени. Нерешительность рынка.',
+            'marubozu_bull': 'Длинное бычье тело без теней. Сильное давление покупателей.',
+            'marubozu_bear': 'Длинное медвежье тело без теней. Сильное давление продавцов.',
+            'engulfing_bull': 'Бычья свеча полностью поглощает предыдущую медвежью. Сильный разворот.',
+            'engulfing_bear': 'Медвежья свеча полностью поглощает предыдущую бычью. Сильный разворот.',
+            'morning_star': 'Три свечи: медвежья → маленькая → бычья. Разворот вверх после падения.',
+            'evening_star': 'Три свечи: бычья → маленькая → медвежья. Разворот вниз после роста.',
+            'three_white_soldiers': 'Три подряд бычьих свечи с растущими close. Сильный бычий сигнал.',
+            'three_black_crows': 'Три подряд медвежьих свечи с падающими close. Сильный медвежий сигнал.',
+            'harami_bull': 'Малая бычья свеча внутри большой медвежьей. Ослабление продавцов.',
+            'harami_bear': 'Малая медвежья свеча внутри большой бычьей. Ослабление покупателей.',
+            'piercing_line': 'Бычья свеча открывается ниже предыдущей, закрывается выше её середины.',
+            'dark_cloud': 'Медвежья свеча открывается выше предыдущей, закрывается ниже её середины.',
+            'tweezer_top': 'Два одинаковых максимума подряд (бычья → медвежья). Разворот вниз.',
+            'tweezer_bottom': 'Два одинаковых минимума подряд (медвежья → бычья). Разворот вверх.'
+        };
+
+        function switchPatternMode(mode) {
+            const structDiv = document.getElementById('structurePatterns');
+            const candleDiv = document.getElementById('candlePatterns');
+            if (mode === 'candle') {
+                structDiv.classList.add('hidden');
+                candleDiv.classList.remove('hidden');
+            } else {
+                candleDiv.classList.add('hidden');
+                structDiv.classList.remove('hidden');
+            }
+        }
+
+        async function startCandleScan(candleType) {
+            try {
+                matches = [];
+                matchIdCounter = 0;
+                renderMatches();
+                
+                highlightActiveCandleBtn(candleType);
+                
+                const typeName = structureTypeLabels[candleType] || candleType;
+                
+                document.getElementById('structureInfo').classList.add('hidden');
+                
+                const typeScanDiv = document.getElementById('typeScanInfo');
+                document.getElementById('typeScanName').textContent = typeName;
+                document.getElementById('typeScanDescription').textContent = candleDescriptions[candleType] || '';
+                typeScanDiv.classList.remove('hidden');
+                
+                const response = await fetch('/api/start-scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: 'candle_scan', candle_filter: candleType })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Ошибка');
+                }
+                
+                const data = await response.json();
+                updateStatus(true);
+                
+            } catch (error) {
+                console.error('Ошибка candle scan:', error);
+                alert('Ошибка: ' + error.message);
+            }
+        }
+
+        function highlightActiveCandleBtn(candleType) {
+            document.querySelectorAll('.candle-scan-btn').forEach(btn => {
+                btn.classList.remove('ring-2', 'ring-white');
+            });
+            document.querySelectorAll('.candle-scan-btn').forEach(btn => {
+                if (btn.getAttribute('onclick')?.includes(`'${candleType}'`)) {
+                    btn.classList.add('ring-2', 'ring-white');
+                }
+            });
+        }
 
         async function startTypeScan(structureType) {
             try {
