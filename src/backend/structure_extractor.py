@@ -17,6 +17,8 @@ class StructureType(str, Enum):
     IMPULSE_UP = "impulse_up"
     IMPULSE_DOWN = "impulse_down"
     BREAKOUT = "breakout"
+    SQUEEZE_UP = "squeeze_up"
+    SQUEEZE_DOWN = "squeeze_down"
     UNKNOWN = "unknown"
 
 
@@ -377,6 +379,24 @@ class StructureExtractor:
                 
                 if total_range > 0 and flat_range / total_range < 0.3 and spike_range / total_range > 0.5:
                     return StructureType.BREAKOUT
+        
+        if len(pivots) >= 4:
+            highs = [p.value for p in pivots if p.is_high]
+            lows = [p.value for p in pivots if not p.is_high]
+            
+            if len(highs) >= 2 and len(lows) >= 2:
+                price_range = max(line) - min(line)
+                if price_range > 0:
+                    high_range = (max(highs) - min(highs)) / price_range
+                    low_range = (max(lows) - min(lows)) / price_range
+                    high_trend = (highs[-1] - highs[0]) / price_range
+                    low_trend = (lows[-1] - lows[0]) / price_range
+                    
+                    if high_range < 0.25 and low_trend > 0.1:
+                        return StructureType.SQUEEZE_UP
+                    
+                    if low_range < 0.25 and high_trend < -0.1:
+                        return StructureType.SQUEEZE_DOWN
         
         if compression > 0.3:
             if len(pivots) >= 4:

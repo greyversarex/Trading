@@ -39,8 +39,10 @@ current_structure_id: Optional[int] = None
 scan_threshold: float = 50.0
 is_scanning: bool = False
 scan_task: Optional[asyncio.Task] = None
-search_mode: str = "preset"  # "preset" or "uploaded"
-search_pattern_type: Optional[str] = None  # For preset mode filtering
+search_mode: str = "preset"  # "preset", "uploaded", "manual", or "type_scan"
+search_pattern_type: Optional[str] = None
+search_type_filter: Optional[str] = None
+type_scan_seen: set = set()
 
 
 class ThresholdUpdate(BaseModel):
@@ -58,9 +60,10 @@ class PresetRequest(BaseModel):
 
 
 class StartScanRequest(BaseModel):
-    mode: str = "preset"  # "preset", "uploaded", or "manual"
-    pattern_type: Optional[str] = None  # For preset: triangle_up, triangle_down, trend_up, trend_down, range, compression
-    structure_id: Optional[int] = None  # For uploaded/manual: ID of saved structure
+    mode: str = "preset"  # "preset", "uploaded", "manual", or "type_scan"
+    pattern_type: Optional[str] = None
+    structure_id: Optional[int] = None
+    type_filter: Optional[str] = None
 
 
 class ManualPivot(BaseModel):
@@ -99,7 +102,11 @@ async def broadcast_message(message: dict):
 
 async def on_market_update(symbol: str, timeframe: str):
     """Callback when market data updates."""
-    global current_reference, scan_threshold
+    global current_reference, scan_threshold, search_mode, search_type_filter
+    
+    if search_mode == "type_scan":
+        await on_market_update_type_scan(symbol, timeframe)
+        return
     
     if current_reference is None:
         return
@@ -136,6 +143,40 @@ async def on_market_update(symbol: str, timeframe: str):
         })
 
 
+async def on_market_update_type_scan(symbol: str, timeframe: str):
+    """Callback for type-based scanning - no reference needed, just classify and filter."""
+    global search_type_filter, type_scan_seen
+    
+    if not search_type_filter:
+        return
+    
+    structures = scanner.get_all_structures()
+    relevant = [(s, tf, f, ts) for s, tf, f, ts in structures 
+                if s == symbol and tf == timeframe]
+    
+    for sym, tf, features, timestamp in relevant:
+        if features is None:
+            continue
+        if features.structure_type.value == search_type_filter:
+            key = f"{sym}_{tf}"
+            if key in type_scan_seen:
+                continue
+            type_scan_seen.add(key)
+            await broadcast_message({
+                "type": "match",
+                "data": {
+                    "match_id": None,
+                    "symbol": sym,
+                    "timeframe": tf,
+                    "similarity_score": 100.0,
+                    "structure_type": features.structure_type.value,
+                    "timestamp": timestamp,
+                    "is_mirrored": False,
+                    "normalized_line": features.normalized_line.tolist()
+                }
+            })
+
+
 async def run_continuous_scan():
     """Run continuous market scanning."""
     global is_scanning
@@ -150,7 +191,11 @@ async def run_continuous_scan():
 
 async def run_initial_scan():
     """Run initial scan against all current structures."""
-    global current_reference, scan_threshold, current_structure_id
+    global current_reference, scan_threshold, current_structure_id, search_mode, search_type_filter
+    
+    if search_mode == "type_scan":
+        await run_initial_type_scan()
+        return
     
     if current_reference is None:
         return
@@ -180,6 +225,41 @@ async def run_initial_scan():
     await broadcast_message({
         "type": "initial_scan_complete",
         "data": {"total_matches": len(matches)}
+    })
+
+
+async def run_initial_type_scan():
+    """Run initial scan by structure type - no reference needed."""
+    global search_type_filter
+    
+    if not search_type_filter:
+        return
+    
+    structures = scanner.get_all_structures()
+    match_count = 0
+    
+    for sym, tf, features, timestamp in structures:
+        if features is None:
+            continue
+        if features.structure_type.value == search_type_filter:
+            match_count += 1
+            await broadcast_message({
+                "type": "match",
+                "data": {
+                    "match_id": None,
+                    "symbol": sym,
+                    "timeframe": tf,
+                    "similarity_score": 100.0,
+                    "structure_type": features.structure_type.value,
+                    "timestamp": timestamp,
+                    "is_mirrored": False,
+                    "normalized_line": features.normalized_line.tolist()
+                }
+            })
+    
+    await broadcast_message({
+        "type": "initial_scan_complete",
+        "data": {"total_matches": match_count}
     })
 
 
@@ -425,15 +505,23 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id
+    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen
     
     if data is None:
         data = StartScanRequest()
     
     search_mode = data.mode
     search_pattern_type = data.pattern_type
+    search_type_filter = data.type_filter
+    type_scan_seen = set()
     
-    if data.mode == "preset":
+    if data.mode == "type_scan":
+        if data.type_filter is None:
+            raise HTTPException(status_code=400, detail="type_filter required for type_scan mode")
+        current_reference = None
+        current_structure_id = None
+        
+    elif data.mode == "preset":
         if data.pattern_type is None:
             raise HTTPException(status_code=400, detail="pattern_type required for preset mode")
         
@@ -462,7 +550,7 @@ async def start_scan(data: Optional[StartScanRequest] = None):
         if current_reference is None:
             raise HTTPException(status_code=400, detail="No manual structure created. Create one first.")
     else:
-        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', or 'manual'")
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', 'manual', or 'type_scan'")
     
     if is_scanning:
         await stop_scan()

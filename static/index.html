@@ -59,45 +59,57 @@
                 </div>
 
                 <div class="bg-gray-800 rounded-lg p-6">
-                    <h2 class="text-xl font-semibold mb-4">Готовые Паттерны</h2>
+                    <h2 class="text-xl font-semibold mb-4">Поиск по Типу</h2>
+                    <p class="text-xs text-gray-400 mb-3">Сканирует рынок и показывает графики с выбранным типом структуры</p>
                     <div class="grid grid-cols-2 gap-2">
-                        <button onclick="selectPreset('triangle_up')" class="preset-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left">
-                            <div class="font-medium">Треугольник ▲</div>
+                        <button onclick="startTypeScan('squeeze_up')" class="type-scan-btn bg-gray-700 hover:bg-emerald-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Поджатие ↑</div>
+                            <div class="text-xs text-gray-400">К сопротивлению</div>
+                        </button>
+                        <button onclick="startTypeScan('squeeze_down')" class="type-scan-btn bg-gray-700 hover:bg-rose-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Поджатие ↓</div>
+                            <div class="text-xs text-gray-400">К поддержке</div>
+                        </button>
+                        <button onclick="startTypeScan('triangle')" class="type-scan-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Треугольник</div>
                             <div class="text-xs text-gray-400">Сходящийся</div>
                         </button>
-                        <button onclick="selectPreset('triangle_down')" class="preset-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left">
-                            <div class="font-medium">Треугольник ▼</div>
-                            <div class="text-xs text-gray-400">Расширяющийся</div>
-                        </button>
-                        <button onclick="selectPreset('trend_up')" class="preset-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left">
-                            <div class="font-medium">Тренд ↑</div>
-                            <div class="text-xs text-gray-400">Бычий</div>
-                        </button>
-                        <button onclick="selectPreset('trend_down')" class="preset-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left">
-                            <div class="font-medium">Тренд ↓</div>
-                            <div class="text-xs text-gray-400">Медвежий</div>
-                        </button>
-                        <button onclick="selectPreset('range')" class="preset-btn bg-gray-700 hover:bg-blue-600 p-3 rounded-lg text-sm text-left">
-                            <div class="font-medium">Диапазон</div>
-                            <div class="text-xs text-gray-400">Боковик</div>
-                        </button>
-                        <button onclick="selectPreset('compression')" class="preset-btn bg-gray-700 hover:bg-yellow-600 p-3 rounded-lg text-sm text-left">
+                        <button onclick="startTypeScan('compression')" class="type-scan-btn bg-gray-700 hover:bg-yellow-600 p-3 rounded-lg text-sm text-left transition">
                             <div class="font-medium">Сжатие</div>
                             <div class="text-xs text-gray-400">Консолидация</div>
                         </button>
-                    </div>
-                    
-                    <div class="mt-4 pt-4 border-t border-gray-700">
-                        <h3 class="text-sm font-medium mb-3">Поиск уровней</h3>
-                        <div class="flex items-center gap-2">
-                            <label class="text-xs text-gray-400">Мин. касаний:</label>
-                            <input type="number" id="levelTouches" value="3" min="2" max="10" 
-                                   class="w-16 bg-gray-700 rounded px-2 py-1 text-sm">
-                            <button onclick="selectPreset('level')" 
-                                    class="flex-1 bg-gray-700 hover:bg-orange-600 py-1 px-3 rounded text-sm">
-                                Уровни
-                            </button>
-                        </div>
+                        <button onclick="startTypeScan('trend_up')" class="type-scan-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Тренд ↑</div>
+                            <div class="text-xs text-gray-400">Бычий</div>
+                        </button>
+                        <button onclick="startTypeScan('trend_down')" class="type-scan-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Тренд ↓</div>
+                            <div class="text-xs text-gray-400">Медвежий</div>
+                        </button>
+                        <button onclick="startTypeScan('range')" class="type-scan-btn bg-gray-700 hover:bg-blue-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Диапазон</div>
+                            <div class="text-xs text-gray-400">Боковик</div>
+                        </button>
+                        <button onclick="startTypeScan('breakout')" class="type-scan-btn bg-gray-700 hover:bg-orange-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Пробой</div>
+                            <div class="text-xs text-gray-400">Выход из диапазона</div>
+                        </button>
+                        <button onclick="startTypeScan('impulse_up')" class="type-scan-btn bg-gray-700 hover:bg-green-700 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Импульс ↑</div>
+                            <div class="text-xs text-gray-400">Резкий рост</div>
+                        </button>
+                        <button onclick="startTypeScan('impulse_down')" class="type-scan-btn bg-gray-700 hover:bg-red-700 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Импульс ↓</div>
+                            <div class="text-xs text-gray-400">Резкое падение</div>
+                        </button>
+                        <button onclick="startTypeScan('accumulation')" class="type-scan-btn bg-gray-700 hover:bg-cyan-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Накопление</div>
+                            <div class="text-xs text-gray-400">Боковое движение</div>
+                        </button>
+                        <button onclick="startTypeScan('retest')" class="type-scan-btn bg-gray-700 hover:bg-indigo-600 p-3 rounded-lg text-sm text-left transition">
+                            <div class="font-medium">Ретест</div>
+                            <div class="text-xs text-gray-400">Возврат к уровню</div>
+                        </button>
                     </div>
                 </div>
 
@@ -242,13 +254,18 @@
                         <div class="flex items-center gap-4">
                             <select id="typeFilter" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
                                 <option value="">Все типы</option>
+                                <option value="squeeze_up">Поджатие вверх</option>
+                                <option value="squeeze_down">Поджатие вниз</option>
                                 <option value="compression">Сжатие</option>
-                                <option value="accumulation">Накопление</option>
                                 <option value="triangle">Треугольник</option>
+                                <option value="accumulation">Накопление</option>
                                 <option value="range">Диапазон</option>
                                 <option value="retest">Ретест</option>
                                 <option value="trend_up">Восходящий тренд</option>
                                 <option value="trend_down">Нисходящий тренд</option>
+                                <option value="impulse_up">Импульс вверх</option>
+                                <option value="impulse_down">Импульс вниз</option>
+                                <option value="breakout">Пробой</option>
                             </select>
                             <select id="sortBy" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
                                 <option value="similarity">По схожести</option>
@@ -468,6 +485,8 @@
             'impulse_up': 'Импульс вверх',
             'impulse_down': 'Импульс вниз',
             'breakout': 'Пробой',
+            'squeeze_up': 'Поджатие вверх',
+            'squeeze_down': 'Поджатие вниз',
             'unknown': 'Неизвестно'
         };
 
@@ -1217,17 +1236,35 @@
             }
         }
 
-        async function selectPreset(presetType) {
-            let touches = 3;
-            if (presetType === 'level') {
-                touches = parseInt(document.getElementById('levelTouches').value) || 3;
-            }
-            
+        async function startTypeScan(structureType) {
             try {
-                const response = await fetch('/api/preset', {
+                matches = [];
+                matchIdCounter = 0;
+                renderMatches();
+                
+                highlightActiveTypeBtn(structureType);
+                
+                const typeName = structureTypeLabels[structureType] || structureType;
+                document.getElementById('uploadedImage').classList.add('hidden');
+                
+                const infoDiv = document.getElementById('structureInfo');
+                infoDiv.innerHTML = `
+                    <div class="text-sm">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-lg font-bold text-blue-400">Поиск по типу</span>
+                        </div>
+                        <div class="bg-gray-700 rounded p-3">
+                            <div class="text-gray-300">Ищем: <span class="text-white font-medium">${typeName}</span></div>
+                            <div class="text-xs text-gray-400 mt-1">Сканируем все пары и таймфреймы</div>
+                        </div>
+                    </div>
+                `;
+                infoDiv.classList.remove('hidden');
+                
+                const response = await fetch('/api/start-scan', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ preset_type: presetType, min_touches: touches })
+                    body: JSON.stringify({ mode: 'type_scan', type_filter: structureType })
                 });
                 
                 if (!response.ok) {
@@ -1236,34 +1273,21 @@
                 }
                 
                 const data = await response.json();
-                currentStructure = data;
-                currentStructure.searchMode = 'preset';
-                currentStructure.patternType = presetType;
-                
-                document.getElementById('uploadedImage').classList.add('hidden');
-                showStructureInfo(data);
-                
-                highlightActivePreset(presetType);
-                
-                matches = [];
-                matchIdCounter = 0;
-                renderMatches();
-                
-                await startScanWithMode('preset', presetType);
+                updateStatus(true);
                 
             } catch (error) {
-                alert('Ошибка выбора паттерна: ' + error.message);
+                alert('Ошибка запуска сканирования: ' + error.message);
             }
         }
         
-        function highlightActivePreset(presetType) {
-            document.querySelectorAll('.preset-btn').forEach(btn => {
-                btn.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-600');
+        function highlightActiveTypeBtn(structureType) {
+            document.querySelectorAll('.type-scan-btn').forEach(btn => {
+                btn.classList.remove('ring-2', 'ring-blue-400');
             });
             
-            const activeBtn = document.querySelector(`[onclick*="selectPreset('${presetType}')"]`);
+            const activeBtn = document.querySelector(`[onclick*="startTypeScan('${structureType}')"]`);
             if (activeBtn) {
-                activeBtn.classList.add('ring-2', 'ring-blue-500');
+                activeBtn.classList.add('ring-2', 'ring-blue-400');
             }
         }
 
