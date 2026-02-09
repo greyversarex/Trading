@@ -451,7 +451,6 @@
                                     <th class="pb-3 pr-4">Пара</th>
                                     <th class="pb-3 pr-4">Таймфрейм</th>
                                     <th class="pb-3 pr-4">Тип</th>
-                                    <th class="pb-3 pr-4">Схожесть</th>
                                     <th class="pb-3 pr-4">24ч</th>
                                     <th class="pb-3 pr-4">Превью</th>
                                     <th class="pb-3 pr-4">Время</th>
@@ -807,7 +806,6 @@
                 <th class="pb-3 pr-4">Пара</th>
                 <th class="pb-3 pr-4">Таймфрейм</th>
                 <th class="pb-3 pr-4">Тип</th>
-                <th class="pb-3 pr-4">Схожесть</th>
                 <th class="pb-3 pr-4">24ч</th>
                 <th class="pb-3 pr-4">Превью</th>
                 <th class="pb-3 pr-4">Время</th>
@@ -840,15 +838,6 @@
                         <span class="px-2 py-1 text-xs rounded ${getTypeColor(match.structure_type)}">
                             ${structureTypeLabels[match.structure_type] || match.structure_type}
                         </span>
-                    </td>
-                    <td class="py-3 pr-4">
-                        <div class="flex items-center">
-                            <div class="w-16 bg-gray-700 rounded-full h-2 mr-2">
-                                <div class="h-2 rounded-full ${getScoreColor(match.similarity_score)}" 
-                                     style="width: ${match.similarity_score}%"></div>
-                            </div>
-                            <span class="text-sm">${match.similarity_score.toFixed(1)}%</span>
-                        </div>
                     </td>
                     <td class="py-3 pr-4">
                         <span class="text-sm font-medium ${(match.price_change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}">
