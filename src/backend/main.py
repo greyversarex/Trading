@@ -45,6 +45,7 @@ search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", or "
 search_pattern_type: Optional[str] = None
 search_type_filter: Optional[str] = None
 search_candle_filter: Optional[str] = None
+search_timeframe_filter: Optional[str] = None
 type_scan_seen: set = set()
 candle_scan_seen: set = set()
 
@@ -69,6 +70,7 @@ class StartScanRequest(BaseModel):
     structure_id: Optional[int] = None
     type_filter: Optional[str] = None
     candle_filter: Optional[str] = None
+    timeframe_filter: Optional[str] = None
 
 
 class ManualPivot(BaseModel):
@@ -156,9 +158,12 @@ async def on_market_update(symbol: str, timeframe: str):
 
 async def on_market_update_type_scan(symbol: str, timeframe: str):
     """Callback for type-based scanning - no reference needed, just classify and filter."""
-    global search_type_filter, type_scan_seen
+    global search_type_filter, type_scan_seen, search_timeframe_filter
     
     if not search_type_filter:
+        return
+    
+    if search_timeframe_filter and timeframe != search_timeframe_filter:
         return
     
     structures = scanner.get_all_structures()
@@ -192,9 +197,12 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
 
 async def on_market_update_candle_scan(symbol: str, timeframe: str):
     """Callback for candle-pattern scanning."""
-    global search_candle_filter, candle_scan_seen
+    global search_candle_filter, candle_scan_seen, search_timeframe_filter
     
     if not search_candle_filter:
+        return
+    
+    if search_timeframe_filter and timeframe != search_timeframe_filter:
         return
     
     candles = scanner.get_candles(symbol, timeframe)
@@ -244,6 +252,8 @@ async def run_initial_candle_scan():
     
     for symbol, sym_data in scanner.symbol_data.items():
         for timeframe, candles in sym_data.candles.items():
+            if search_timeframe_filter and timeframe != search_timeframe_filter:
+                continue
             if not candles or len(candles) < 5:
                 continue
             
@@ -344,7 +354,7 @@ async def run_initial_scan():
 
 async def run_initial_type_scan():
     """Run initial scan by structure type - no reference needed."""
-    global search_type_filter
+    global search_type_filter, search_timeframe_filter
     
     if not search_type_filter:
         return
@@ -354,6 +364,8 @@ async def run_initial_type_scan():
     
     for sym, tf, features, timestamp, candle_time in structures:
         if features is None:
+            continue
+        if search_timeframe_filter and tf != search_timeframe_filter:
             continue
         if features.structure_type.value == search_type_filter:
             match_count += 1
@@ -621,7 +633,7 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen
+    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter
     
     if data is None:
         data = StartScanRequest()
@@ -630,6 +642,7 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     search_pattern_type = data.pattern_type
     search_type_filter = data.type_filter
     search_candle_filter = data.candle_filter
+    search_timeframe_filter = data.timeframe_filter
     type_scan_seen = set()
     candle_scan_seen = set()
     

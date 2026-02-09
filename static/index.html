@@ -61,11 +61,23 @@
                 <div class="bg-gray-800 rounded-lg p-6">
                     <div class="flex items-center justify-between mb-4">
                         <h2 class="text-xl font-semibold">Поиск Паттернов</h2>
-                        <select id="patternModeSelect" onchange="switchPatternMode(this.value)" 
-                                class="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500">
-                            <option value="structure">Структуры</option>
-                            <option value="candle">Свечные</option>
-                        </select>
+                        <div class="flex gap-2">
+                            <select id="timeframeSelect" 
+                                    class="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500">
+                                <option value="">Все ТФ</option>
+                                <option value="1m">1м</option>
+                                <option value="5m">5м</option>
+                                <option value="15m">15м</option>
+                                <option value="1h">1ч</option>
+                                <option value="4h">4ч</option>
+                                <option value="1d">1д</option>
+                            </select>
+                            <select id="patternModeSelect" onchange="switchPatternMode(this.value)" 
+                                    class="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500">
+                                <option value="structure">Структуры</option>
+                                <option value="candle">Свечные</option>
+                            </select>
+                        </div>
                     </div>
 
                     <div id="structurePatterns">
@@ -365,15 +377,7 @@
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-400">Таймфреймов:</span>
-                            <span class="font-medium">6 (1м - 1ч)</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Релевантных:</span>
-                            <span id="relevantCount" class="font-medium text-green-400">0</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Нерелевантных:</span>
-                            <span id="irrelevantCount" class="font-medium text-red-400">0</span>
+                            <span class="font-medium">6 (1м - 1д)</span>
                         </div>
                     </div>
                     <div id="dataError" class="mt-3 p-2 bg-red-900/30 rounded text-red-400 text-xs hidden"></div>
@@ -453,14 +457,12 @@
                                     <th class="pb-3 pr-4">Тип</th>
                                     <th class="pb-3 pr-4">24ч</th>
                                     <th class="pb-3 pr-4">Превью</th>
-                                    <th class="pb-3 pr-4">Время</th>
                                     <th class="pb-3 pr-2">График</th>
-                                    <th class="pb-3">Оценка</th>
                                 </tr>
                             </thead>
                             <tbody id="matchesTable">
                                 <tr>
-                                    <td colspan="9" class="py-8 text-center text-gray-500">
+                                    <td colspan="7" class="py-8 text-center text-gray-500">
                                         Загрузите график и начните сканирование для поиска совпадений
                                     </td>
                                 </tr>
@@ -529,20 +531,6 @@
                 </div>
             </div>
             
-            <div class="mt-6 flex justify-center gap-4">
-                <button onclick="submitFeedbackFromModal(true)" class="px-6 py-2 bg-green-600 hover:bg-green-700 rounded-lg flex items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                    </svg>
-                    Релевантно
-                </button>
-                <button onclick="submitFeedbackFromModal(false)" class="px-6 py-2 bg-red-600 hover:bg-red-700 rounded-lg flex items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                    Нерелевантно
-                </button>
-            </div>
         </div>
     </div>
 
@@ -630,7 +618,6 @@
         let referenceChart = null;
         let pivotChart = null;
         let isScanning = false;
-        let feedbackStats = { relevant: 0, irrelevant: 0 };
         let currentStructure = null;
         let currentModalMatch = null;
         let modalChart = null;
@@ -808,9 +795,7 @@
                 <th class="pb-3 pr-4">Тип</th>
                 <th class="pb-3 pr-4">24ч</th>
                 <th class="pb-3 pr-4">Превью</th>
-                <th class="pb-3 pr-4">Время</th>
                 <th class="pb-3 pr-2">График</th>
-                <th class="pb-3">Оценка</th>
             `;
             
             const filteredMatches = getFilteredAndSortedMatches();
@@ -847,34 +832,12 @@
                     <td class="py-3 pr-4">
                         <canvas id="sparkline-${index}" class="sparkline"></canvas>
                     </td>
-                    <td class="py-3 pr-4 text-sm">
-                        ${(() => {
-                            const age = formatPatternAge(match);
-                            return `<span class="${age.color}" title="${match.pattern_time ? new Date(match.pattern_time).toLocaleString('ru-RU') : new Date(match.timestamp).toLocaleString('ru-RU')}">${age.text}</span>`;
-                        })()}
-                    </td>
                     <td class="py-3 pr-2">
                         <div onclick="event.stopPropagation()">
                             <button onclick="openTradingViewChart('${match.symbol}', '${match.timeframe}')" 
                                     class="p-1.5 hover:bg-blue-600/20 rounded text-blue-400 hover:text-blue-300 transition" title="Открыть график TradingView">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
-                                </svg>
-                            </button>
-                        </div>
-                    </td>
-                    <td class="py-3">
-                        <div class="flex gap-1" onclick="event.stopPropagation()">
-                            <button onclick="submitFeedbackById(${match.local_id}, true)" 
-                                    class="p-1 hover:bg-green-600/20 rounded text-green-400" title="Релевантно">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                </svg>
-                            </button>
-                            <button onclick="submitFeedbackById(${match.local_id}, false)" 
-                                    class="p-1 hover:bg-red-600/20 rounded text-red-400" title="Нерелевантно">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                                 </svg>
                             </button>
                         </div>
@@ -1163,71 +1126,6 @@
             
             ctx.stroke();
             ctx.shadowBlur = 0;
-        }
-
-        async function submitFeedbackFromModal(isRelevant) {
-            if (!currentModalMatch) return;
-            await submitFeedbackById(currentModalMatch.local_id, isRelevant);
-            closeModal();
-        }
-
-        async function submitFeedbackById(localId, isRelevant) {
-            const match = matches.find(m => m.local_id === localId);
-            if (!match) return;
-            
-            const matchId = match.match_id;
-            if (!matchId) {
-                console.warn('Match не имеет ID в базе данных, оценка не будет сохранена');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/feedback', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        match_id: matchId, 
-                        is_relevant: isRelevant,
-                        symbol: match.symbol,
-                        timeframe: match.timeframe
-                    })
-                });
-                
-                if (!response.ok) {
-                    console.error('Ошибка сохранения оценки:', response.status);
-                    return;
-                }
-                
-                if (isRelevant) {
-                    feedbackStats.relevant++;
-                    document.getElementById('relevantCount').textContent = feedbackStats.relevant;
-                } else {
-                    feedbackStats.irrelevant++;
-                    document.getElementById('irrelevantCount').textContent = feedbackStats.irrelevant;
-                }
-            } catch (error) {
-                console.error('Ошибка отправки оценки:', error);
-            }
-        }
-
-        async function submitFeedback(matchId, isRelevant) {
-            try {
-                await fetch('/api/feedback', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ match_id: matchId, is_relevant: isRelevant })
-                });
-                
-                if (isRelevant) {
-                    feedbackStats.relevant++;
-                    document.getElementById('relevantCount').textContent = feedbackStats.relevant;
-                } else {
-                    feedbackStats.irrelevant++;
-                    document.getElementById('irrelevantCount').textContent = feedbackStats.irrelevant;
-                }
-            } catch (error) {
-                console.error('Ошибка отправки оценки:', error);
-            }
         }
 
         function drawSparkline(canvasId, data) {
@@ -1662,10 +1560,11 @@
                 document.getElementById('typeScanDescription').textContent = candleDescriptions[candleType] || '';
                 typeScanDiv.classList.remove('hidden');
                 
+                const tfFilter = document.getElementById('timeframeSelect').value || null;
                 const response = await fetch('/api/start-scan', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode: 'candle_scan', candle_filter: candleType })
+                    body: JSON.stringify({ mode: 'candle_scan', candle_filter: candleType, timeframe_filter: tfFilter })
                 });
                 
                 if (!response.ok) {
@@ -1710,10 +1609,11 @@
                 document.getElementById('typeScanDescription').textContent = typeDescriptions[structureType] || '';
                 typeScanDiv.classList.remove('hidden');
                 
+                const tfFilter = document.getElementById('timeframeSelect').value || null;
                 const response = await fetch('/api/start-scan', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode: 'type_scan', type_filter: structureType })
+                    body: JSON.stringify({ mode: 'type_scan', type_filter: structureType, timeframe_filter: tfFilter })
                 });
                 
                 if (!response.ok) {
