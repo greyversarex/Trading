@@ -683,8 +683,7 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     is_scanning = True
     scan_task = asyncio.create_task(run_continuous_scan())
     
-    await asyncio.sleep(2)
-    asyncio.create_task(run_initial_scan())
+    asyncio.create_task(_wait_and_run_initial_scan())
     
     return {
         "status": "started",
@@ -692,6 +691,26 @@ async def start_scan(data: Optional[StartScanRequest] = None):
         "pattern_type": search_pattern_type,
         "num_symbols": len(scanner.symbols)
     }
+
+
+async def _wait_and_run_initial_scan():
+    """Wait for scanner initialization to complete, then run initial scan."""
+    await broadcast_message({
+        "type": "scan_status",
+        "data": {"status": "initializing", "message": "Загрузка рыночных данных..."}
+    })
+    for i in range(120):
+        if getattr(scanner, 'initialized', False):
+            stats = scanner.get_structure_stats()
+            await broadcast_message({
+                "type": "scan_status",
+                "data": {"status": "scanning", "message": f"Загружено {stats['total_structures']} структур, сканирование..."}
+            })
+            await run_initial_scan()
+            return
+        await asyncio.sleep(0.5)
+    print("Warning: Scanner initialization timed out, running initial scan anyway")
+    await run_initial_scan()
 
 
 @app.post("/api/stop-scan")

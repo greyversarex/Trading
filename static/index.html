@@ -437,6 +437,7 @@
                                 <option value="top_losers">Топ падения 24ч</option>
                             </select>
                             <span id="matchCount" class="text-gray-400">0 совпадений</span>
+                            <span id="scanStatusInfo" class="text-yellow-400 text-xs ml-2"></span>
                             <button id="clearMatches" class="text-gray-400 hover:text-white text-sm">
                                 Очистить
                             </button>
@@ -721,6 +722,13 @@
                     break;
                 case 'initial_scan_complete':
                     console.log(`Первичное сканирование завершено: ${message.data.total_matches} совпадений`);
+                    const statusInfo = document.getElementById('scanStatusInfo');
+                    if (statusInfo) statusInfo.textContent = `Найдено совпадений: ${message.data.total_matches}`;
+                    break;
+                case 'scan_status':
+                    console.log(`Статус сканера: ${message.data.message}`);
+                    const statusEl = document.getElementById('scanStatusInfo');
+                    if (statusEl) statusEl.textContent = message.data.message;
                     break;
                 case 'threshold_updated':
                     document.getElementById('threshold').value = message.data.threshold;

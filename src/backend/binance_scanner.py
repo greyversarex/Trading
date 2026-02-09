@@ -79,6 +79,7 @@ class BinanceScanner:
         self.price_change_24h: Dict[str, float] = {}
         self._use_real_data: bool = True
         self._api_failures: int = 0
+        self.initialized: bool = False
     
     def _get_default_symbols(self) -> List[str]:
         """Return default crypto symbols."""
@@ -459,15 +460,18 @@ class BinanceScanner:
             return
         
         self.is_running = True
+        self.initialized = False
         self.on_update_callback = on_update
         
         await self.initialize_symbols()
+        self.initialized = True
         
         self._poll_task = asyncio.create_task(self._poll_loop())
     
     async def stop(self):
         """Stop the scanner."""
         self.is_running = False
+        self.initialized = False
         
         if self._poll_task:
             self._poll_task.cancel()
