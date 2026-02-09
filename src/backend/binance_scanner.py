@@ -50,7 +50,19 @@ class BinanceScanner:
         "1d": 100,
     }
     
-    working_endpoint: str = "simulation"
+    BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+    BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr"
+    
+    BINANCE_TF_MAP = {
+        "1m": "1m",
+        "5m": "5m",
+        "15m": "15m",
+        "1h": "1h",
+        "4h": "4h",
+        "1d": "1d",
+    }
+    
+    working_endpoint: str = "binance"
     data_available: bool = False
     last_error: str = None
     
@@ -65,6 +77,8 @@ class BinanceScanner:
         self._poll_task: Optional[asyncio.Task] = None
         self._base_prices: Dict[str, float] = {}
         self.price_change_24h: Dict[str, float] = {}
+        self._use_real_data: bool = True
+        self._api_failures: int = 0
     
     def _get_default_symbols(self) -> List[str]:
         """Return default crypto symbols."""
@@ -174,6 +188,53 @@ class BinanceScanner:
         
         return candles
     
+    async def _fetch_binance_24h_tickers(self) -> Dict[str, float]:
+        """Fetch 24h price changes from Binance."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    self.BINANCE_TICKER_URL,
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        changes = {}
+                        for item in data:
+                            sym = item.get('symbol', '')
+                            if sym.endswith('USDT'):
+                                base = sym.replace('USDT', '')
+                                pct = float(item.get('priceChangePercent', 0))
+                                changes[base] = round(pct, 2)
+                        return changes
+        except Exception as e:
+            print(f"Binance 24h ticker error: {e}")
+        return {}
+    
+    STABLECOINS = {"USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "FDUSD", "PYUSD", "GUSD", "FRAX", "USDS", "USDE"}
+    
+    COINGECKO_TO_BINANCE = {
+        "WBT": None,
+        "FIGR_HELOC": None,
+        "WETH": None,
+        "STETH": None,
+        "WSTETH": None,
+        "LEO": None,
+        "BTCB": None,
+        "WEETH": None,
+        "SUSDE": None,
+        "CBBTC": None,
+    }
+    
+    def _is_valid_binance_symbol(self, symbol: str) -> bool:
+        """Check if a symbol is likely valid on Binance as SYMBOLUSDT pair."""
+        if symbol in self.STABLECOINS:
+            return False
+        if symbol in self.COINGECKO_TO_BINANCE and self.COINGECKO_TO_BINANCE[symbol] is None:
+            return False
+        if "_" in symbol or len(symbol) > 10:
+            return False
+        return True
+    
     async def fetch_top_symbols(self) -> List[str]:
         """Get list of symbols to scan."""
         try:
@@ -181,7 +242,7 @@ class BinanceScanner:
             params = {
                 "vs_currency": "usd",
                 "order": "market_cap_desc",
-                "per_page": self.num_symbols,
+                "per_page": min(100, self.num_symbols * 3),
                 "page": 1
             }
             
@@ -189,24 +250,81 @@ class BinanceScanner:
                 async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         data = await response.json()
-                        symbols = [item['symbol'].upper() for item in data]
+                        symbols = []
                         for item in data:
                             sym = item['symbol'].upper()
                             change = item.get('price_change_percentage_24h', 0)
                             self.price_change_24h[sym] = round(change, 2) if change else 0
+                            if self._is_valid_binance_symbol(sym) and len(symbols) < self.num_symbols:
+                                symbols.append(sym)
                         self.data_available = True
-                        self.working_endpoint = "coingecko"
-                        print(f"Got {len(symbols)} symbols from CoinGecko")
+                        print(f"Got {len(symbols)} valid Binance symbols from CoinGecko")
                         return symbols
         except Exception as e:
-            print(f"CoinGecko API error: {e}, using default symbols")
+            print(f"CoinGecko API error: {e}, trying Binance tickers")
         
-        self.working_endpoint = "simulation"
+        try:
+            changes = await self._fetch_binance_24h_tickers()
+            if changes:
+                self.price_change_24h = changes
+        except:
+            pass
+        
         self.data_available = True
         return self._get_default_symbols()
     
+    async def _fetch_binance_klines(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
+        """Fetch real kline data from Binance public API."""
+        binance_symbol = f"{symbol}USDT"
+        binance_interval = self.BINANCE_TF_MAP.get(interval, interval)
+        
+        params = {
+            "symbol": binance_symbol,
+            "interval": binance_interval,
+            "limit": limit
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    self.BINANCE_KLINES_URL, 
+                    params=params, 
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        candles = []
+                        for k in data:
+                            candles.append(CandleData(
+                                open_time=int(k[0]),
+                                open=float(k[1]),
+                                high=float(k[2]),
+                                low=float(k[3]),
+                                close=float(k[4]),
+                                volume=float(k[5]),
+                                close_time=int(k[6])
+                            ))
+                        return candles
+                    else:
+                        error_text = await response.text()
+                        print(f"Binance API error for {binance_symbol} {interval}: {response.status} - {error_text}")
+                        return []
+        except Exception as e:
+            print(f"Binance klines fetch error for {symbol} {interval}: {e}")
+            return []
+    
+    _invalid_symbols: set = set()
+    
     async def fetch_candles(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
-        """Fetch or generate candle data."""
+        """Fetch candle data from Binance API, fall back to simulation if unavailable."""
+        if self._use_real_data and symbol not in self._invalid_symbols:
+            candles = await self._fetch_binance_klines(symbol, interval, limit)
+            if candles:
+                return candles
+            else:
+                self._invalid_symbols.add(symbol)
+                print(f"Marking {symbol} as unavailable on Binance, using simulation")
+        
         return self._generate_realistic_candles(symbol, interval, limit)
     
     def get_structure_stats(self) -> dict:
@@ -235,14 +353,33 @@ class BinanceScanner:
     async def initialize_symbols(self):
         """Initialize symbol list and fetch initial candle data."""
         print("Initializing scanner...")
+        self._invalid_symbols = set()
         self.symbols = await self.fetch_top_symbols()
-        print(f"Loaded {len(self.symbols)} symbols")
+        print(f"Loaded {len(self.symbols)} symbols: {', '.join(self.symbols[:10])}...")
         
         for symbol in self.symbols:
             self.symbol_data[symbol] = SymbolData(symbol=symbol)
         
+        print(f"Fetching real market data from Binance API...")
         await self._update_all_candles()
         self._update_all_structures()
+        
+        real_symbols = set()
+        sim_symbols = set()
+        for sym in self.symbols:
+            if sym in self._invalid_symbols:
+                sim_symbols.add(sym)
+            else:
+                real_symbols.add(sym)
+        
+        if real_symbols and self._use_real_data:
+            self.working_endpoint = "binance"
+            print(f"REAL data for {len(real_symbols)} symbols, simulated for {len(sim_symbols)}")
+            if sim_symbols:
+                print(f"Simulated symbols: {', '.join(sorted(sim_symbols))}")
+        else:
+            self.working_endpoint = "simulation"
+            print(f"Using simulated data")
         
         stats = self.get_structure_stats()
         print(f"Initialized: {stats['symbols_with_data']}/{stats['total_symbols']} symbols with {stats['total_structures']} structures")
@@ -252,6 +389,8 @@ class BinanceScanner:
         for symbol in self.symbols:
             for timeframe in self.TIMEFRAMES.keys():
                 await self._update_symbol_candles(symbol, timeframe)
+                if self._use_real_data and symbol not in self._invalid_symbols:
+                    await asyncio.sleep(0.12)
     
     async def _update_symbol_candles(self, symbol: str, timeframe: str):
         """Update candles for a specific symbol/timeframe."""

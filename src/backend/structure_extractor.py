@@ -672,6 +672,67 @@ class StructureExtractor:
         
         return False, 0.0
 
+    def _detect_trend(self, pivots: List[PivotPoint], line: np.ndarray, trend_slope: float) -> Tuple[bool, str, float]:
+        """Detect trend with strict criteria: higher highs + higher lows for uptrend, etc."""
+        if abs(trend_slope) < 0.25:
+            return False, "", 0.0
+        
+        highs = [p for p in pivots if p.is_high]
+        lows = [p for p in pivots if not p.is_high]
+        
+        if len(highs) < 2 or len(lows) < 2:
+            if abs(trend_slope) > 0.5:
+                direction = "up" if trend_slope > 0 else "down"
+                return True, direction, min(1.0, abs(trend_slope) * 0.7)
+            return False, "", 0.0
+        
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False, "", 0.0
+        
+        hh_count = 0
+        for i in range(1, len(highs)):
+            if highs[i].value > highs[i-1].value:
+                hh_count += 1
+        hh_ratio = hh_count / (len(highs) - 1)
+        
+        hl_count = 0
+        for i in range(1, len(lows)):
+            if lows[i].value > lows[i-1].value:
+                hl_count += 1
+        hl_ratio = hl_count / (len(lows) - 1)
+        
+        lh_count = 0
+        for i in range(1, len(highs)):
+            if highs[i].value < highs[i-1].value:
+                lh_count += 1
+        lh_ratio = lh_count / (len(highs) - 1)
+        
+        ll_count = 0
+        for i in range(1, len(lows)):
+            if lows[i].value < lows[i-1].value:
+                ll_count += 1
+        ll_ratio = ll_count / (len(lows) - 1)
+        
+        n = len(line)
+        last_quarter = line[int(n * 0.75):]
+        first_quarter = line[:int(n * 0.25)]
+        last_vs_first = (np.mean(last_quarter) - np.mean(first_quarter)) / price_range
+        
+        if trend_slope > 0 and hh_ratio >= 0.5 and hl_ratio >= 0.5 and last_vs_first > 0.15:
+            slope_score = min(1.0, abs(trend_slope))
+            hh_hl_score = (hh_ratio + hl_ratio) / 2
+            conf = slope_score * 0.4 + hh_hl_score * 0.4 + min(1.0, last_vs_first) * 0.2
+            return True, "up", conf
+        
+        if trend_slope < 0 and lh_ratio >= 0.5 and ll_ratio >= 0.5 and last_vs_first < -0.15:
+            slope_score = min(1.0, abs(trend_slope))
+            lh_ll_score = (lh_ratio + ll_ratio) / 2
+            conf = slope_score * 0.4 + lh_ll_score * 0.4 + min(1.0, abs(last_vs_first)) * 0.2
+            return True, "down", conf
+        
+        return False, "", 0.0
+    
     def classify_structure(self, trend: float, compression: float, 
                           pivots: List[PivotPoint], line: np.ndarray) -> StructureType:
         candidates = []
@@ -759,10 +820,12 @@ class StructureExtractor:
                 if any(p.is_high for p in recent_pivots[:-1]) and not recent_pivots[-1].is_high:
                     candidates.append((StructureType.RETEST, 0.4))
         
-        if trend > 0.2:
-            candidates.append((StructureType.TREND_UP, min(1.0, abs(trend))))
-        elif trend < -0.2:
-            candidates.append((StructureType.TREND_DOWN, min(1.0, abs(trend))))
+        trend_detected, trend_dir, trend_conf = self._detect_trend(pivots, line, trend)
+        if trend_detected:
+            if trend_dir == "up":
+                candidates.append((StructureType.TREND_UP, trend_conf))
+            else:
+                candidates.append((StructureType.TREND_DOWN, trend_conf))
         
         if abs(trend) < 0.15 and len(pivots) >= 3:
             candidates.append((StructureType.ACCUMULATION, 0.35))
