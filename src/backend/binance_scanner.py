@@ -346,7 +346,9 @@ class BinanceScanner:
         for symbol, data in self.symbol_data.items():
             for timeframe, features in data.structures.items():
                 if features is not None:
-                    results.append((symbol, timeframe, features, timestamp))
+                    candles = data.candles.get(timeframe, [])
+                    last_candle_time = candles[-1].close_time if candles else None
+                    results.append((symbol, timeframe, features, timestamp, last_candle_time))
         
         return results
     

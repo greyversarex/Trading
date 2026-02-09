@@ -148,7 +148,8 @@ async def on_market_update(symbol: str, timeframe: str):
                 "timestamp": match.timestamp,
                 "is_mirrored": match.is_mirrored,
                 "normalized_line": match.normalized_line,
-                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0)
+                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0),
+                "pattern_time": match.pattern_time
             }
         })
 
@@ -161,10 +162,10 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
         return
     
     structures = scanner.get_all_structures()
-    relevant = [(s, tf, f, ts) for s, tf, f, ts in structures 
+    relevant = [(s, tf, f, ts, ct) for s, tf, f, ts, ct in structures 
                 if s == symbol and tf == timeframe]
     
-    for sym, tf, features, timestamp in relevant:
+    for sym, tf, features, timestamp, candle_time in relevant:
         if features is None:
             continue
         if features.structure_type.value == search_type_filter:
@@ -183,7 +184,8 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
                     "timestamp": timestamp,
                     "is_mirrored": False,
                     "normalized_line": features.normalized_line.tolist(),
-                    "price_change_24h": scanner.price_change_24h.get(sym, 0)
+                    "price_change_24h": scanner.price_change_24h.get(sym, 0),
+                    "pattern_time": candle_time
                 }
             })
 
@@ -329,7 +331,8 @@ async def run_initial_scan():
                 "timestamp": match.timestamp,
                 "is_mirrored": match.is_mirrored,
                 "normalized_line": match.normalized_line,
-                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0)
+                "price_change_24h": scanner.price_change_24h.get(match.symbol.replace("USDT", ""), 0),
+                "pattern_time": match.pattern_time
             }
         })
     
@@ -349,7 +352,7 @@ async def run_initial_type_scan():
     structures = scanner.get_all_structures()
     match_count = 0
     
-    for sym, tf, features, timestamp in structures:
+    for sym, tf, features, timestamp, candle_time in structures:
         if features is None:
             continue
         if features.structure_type.value == search_type_filter:
@@ -365,7 +368,8 @@ async def run_initial_type_scan():
                     "timestamp": timestamp,
                     "is_mirrored": False,
                     "normalized_line": features.normalized_line.tolist(),
-                    "price_change_24h": scanner.price_change_24h.get(sym, 0)
+                    "price_change_24h": scanner.price_change_24h.get(sym, 0),
+                    "pattern_time": candle_time
                 }
             })
     
