@@ -432,6 +432,7 @@
                                 <option value="similarity">По схожести</option>
                                 <option value="time">По времени</option>
                                 <option value="symbol">По паре</option>
+                                <option value="freshness">По свежести</option>
                                 <option value="top_gainers">Топ роста 24ч</option>
                                 <option value="top_losers">Топ падения 24ч</option>
                             </select>
@@ -491,7 +492,7 @@
                 </div>
             </div>
             
-            <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+            <div class="grid grid-cols-3 gap-4 mb-4 text-sm">
                 <div class="bg-gray-700/50 rounded p-3">
                     <span class="text-gray-400">Тип:</span>
                     <span id="modalType" class="ml-2 font-medium text-blue-400">Треугольник</span>
@@ -499,6 +500,10 @@
                 <div class="bg-gray-700/50 rounded p-3">
                     <span class="text-gray-400">Схожесть:</span>
                     <span id="modalSimilarity" class="ml-2 font-medium text-green-400">74.5%</span>
+                </div>
+                <div class="bg-gray-700/50 rounded p-3">
+                    <span class="text-gray-400">Паттерн:</span>
+                    <span id="modalPatternTime" class="ml-2 font-medium text-gray-300"></span>
                 </div>
             </div>
             
@@ -762,6 +767,13 @@
                 case 'symbol':
                     filtered.sort((a, b) => a.symbol.localeCompare(b.symbol));
                     break;
+                case 'freshness':
+                    filtered.sort((a, b) => {
+                        const aTime = a.pattern_time || 0;
+                        const bTime = b.pattern_time || 0;
+                        return bTime - aTime;
+                    });
+                    break;
                 case 'top_gainers':
                     filtered.sort((a, b) => (b.price_change_24h || 0) - (a.price_change_24h || 0));
                     break;
@@ -838,8 +850,11 @@
                     <td class="py-3 pr-4">
                         <canvas id="sparkline-${index}" class="sparkline"></canvas>
                     </td>
-                    <td class="py-3 pr-4 text-gray-400 text-sm">
-                        ${new Date(match.timestamp).toLocaleTimeString('ru-RU')}
+                    <td class="py-3 pr-4 text-sm">
+                        ${(() => {
+                            const age = formatPatternAge(match);
+                            return `<span class="${age.color}" title="${match.pattern_time ? new Date(match.pattern_time).toLocaleString('ru-RU') : new Date(match.timestamp).toLocaleString('ru-RU')}">${age.text}</span>`;
+                        })()}
                     </td>
                     <td class="py-3 pr-2">
                         <div onclick="event.stopPropagation()">
@@ -934,6 +949,11 @@
             document.getElementById('modalTitle').textContent = `${match.symbol} - ${match.timeframe}`;
             document.getElementById('modalType').textContent = structureTypeLabels[match.structure_type] || match.structure_type;
             document.getElementById('modalSimilarity').textContent = `${match.similarity_score.toFixed(1)}%`;
+            
+            const ptEl = document.getElementById('modalPatternTime');
+            const age = formatPatternAge(match);
+            ptEl.textContent = age.text;
+            ptEl.className = `ml-2 font-medium ${age.color}`;
             
             const modal = document.getElementById('chartModal');
             modal.classList.remove('hidden');
@@ -1285,6 +1305,39 @@
             if (score >= 80) return 'bg-green-500';
             if (score >= 60) return 'bg-yellow-500';
             return 'bg-blue-500';
+        }
+
+        function formatPatternAge(match) {
+            const patternTime = match.pattern_time;
+            if (!patternTime) {
+                return { text: new Date(match.timestamp).toLocaleTimeString('ru-RU'), color: 'text-gray-400', ageMs: Infinity };
+            }
+            const now = Date.now();
+            const ageMs = now - patternTime;
+            const minutes = Math.floor(ageMs / 60000);
+            const hours = Math.floor(minutes / 60);
+            
+            let text, color;
+            if (minutes < 1) {
+                text = 'Только что';
+                color = 'text-green-400 font-semibold';
+            } else if (minutes < 5) {
+                text = `${minutes} мин назад`;
+                color = 'text-green-400';
+            } else if (minutes < 15) {
+                text = `${minutes} мин назад`;
+                color = 'text-yellow-400';
+            } else if (minutes < 60) {
+                text = `${minutes} мин назад`;
+                color = 'text-orange-400';
+            } else if (hours < 24) {
+                text = `${hours} ч назад`;
+                color = 'text-red-400';
+            } else {
+                text = `${Math.floor(hours / 24)} д назад`;
+                color = 'text-red-500';
+            }
+            return { text, color, ageMs };
         }
 
         function updateStatus(scanning) {

@@ -212,6 +212,8 @@ async def on_market_update_candle_scan(symbol: str, timeframe: str):
             rng = mx - mn if mx > mn else 1
             normalized = [(v - mn) / rng for v in closes]
             
+            pattern_time = candles[-1].close_time
+            
             await broadcast_message({
                 "type": "match",
                 "data": {
@@ -223,7 +225,8 @@ async def on_market_update_candle_scan(symbol: str, timeframe: str):
                     "timestamp": datetime.now().isoformat(),
                     "is_mirrored": False,
                     "normalized_line": normalized,
-                    "price_change_24h": scanner.price_change_24h.get(symbol, 0)
+                    "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+                    "pattern_time": pattern_time
                 }
             })
 
@@ -256,6 +259,8 @@ async def run_initial_candle_scan():
                     rng = mx - mn if mx > mn else 1
                     normalized = [(v - mn) / rng for v in closes]
                     
+                    pattern_time = candles[-1].close_time
+                    
                     await broadcast_message({
                         "type": "match",
                         "data": {
@@ -267,7 +272,8 @@ async def run_initial_candle_scan():
                             "timestamp": datetime.now().isoformat(),
                             "is_mirrored": False,
                             "normalized_line": normalized,
-                            "price_change_24h": scanner.price_change_24h.get(symbol, 0)
+                            "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+                            "pattern_time": pattern_time
                         }
                     })
     
