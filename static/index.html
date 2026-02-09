@@ -445,10 +445,18 @@
                             <button id="clearMatches" class="text-gray-400 hover:text-white text-sm">
                                 Очистить
                             </button>
+                            <div class="flex border border-gray-600 rounded-lg overflow-hidden ml-2">
+                                <button id="viewTable" onclick="switchView('table')" class="px-2 py-1 text-xs bg-blue-600 text-white" title="Таблица">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                                </button>
+                                <button id="viewGrid" onclick="switchView('grid')" class="px-2 py-1 text-xs bg-gray-700 text-gray-400 hover:text-white" title="Графики">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/></svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="overflow-x-auto">
+                    <div id="tableView" class="overflow-x-auto">
                         <table class="w-full">
                             <thead>
                                 <tr class="text-left text-gray-400 border-b border-gray-700">
@@ -468,6 +476,10 @@
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                    <div id="gridView" class="hidden">
+                        <div id="gridContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        </div>
                     </div>
                 </div>
             </div>
@@ -626,11 +638,34 @@
         let marketMovers = [];
         let isMarketView = false;
         let matchIdCounter = 0;
+        let currentView = 'table';
+        let gridWidgets = {};
+        let gridSelectedTf = {};
         
         let manualPivots = [];
         let pivotMode = 'high';
         let manualCanvasCtx = null;
         let createdStructures = [];
+
+        const timeframeToTvInterval = {
+            '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+            '1h': '60', '4h': '240', '1d': 'D', '1w': 'W',
+        };
+
+        const TV_EXCHANGE_MAP = {
+            'HYPE': 'BYBIT:HYPEUSDT',
+            'CRO': 'CRYPTO:CROUSD',
+            'XAUT': 'BITFINEX:XAUTUST',
+            'CC': 'OKX:CCUSDT',
+            'RAIN': 'BYBIT:RAINUSDT',
+            'M': 'OKX:MUSDT',
+            'WBT': 'BYBIT:WBTUSDT',
+            'PI': 'OKX:PIUSDT',
+            'EOS': 'BYBIT:EOSUSDT',
+            'KAS': 'BYBIT:KASUSDT',
+            'JASMY': 'BYBIT:JASMYUSDT',
+            'ONDO': 'BYBIT:ONDOUSDT',
+        };
 
         const structureTypeLabels = {
             'compression': 'Сжатие',
@@ -848,6 +883,181 @@
             filteredMatches.forEach((match, index) => {
                 drawSparkline(`sparkline-${index}`, match.normalized_line);
             });
+
+            if (currentView === 'grid') {
+                renderGridView();
+            }
+        }
+
+        function switchView(view) {
+            currentView = view;
+            const tableView = document.getElementById('tableView');
+            const gridView = document.getElementById('gridView');
+            const btnTable = document.getElementById('viewTable');
+            const btnGrid = document.getElementById('viewGrid');
+            
+            if (view === 'table') {
+                tableView.classList.remove('hidden');
+                gridView.classList.add('hidden');
+                btnTable.className = 'px-2 py-1 text-xs bg-blue-600 text-white';
+                btnGrid.className = 'px-2 py-1 text-xs bg-gray-700 text-gray-400 hover:text-white';
+                cleanupGridWidgets();
+            } else {
+                tableView.classList.add('hidden');
+                gridView.classList.remove('hidden');
+                btnTable.className = 'px-2 py-1 text-xs bg-gray-700 text-gray-400 hover:text-white';
+                btnGrid.className = 'px-2 py-1 text-xs bg-blue-600 text-white';
+                renderGridView();
+            }
+        }
+
+        function cleanupGridWidgets() {
+            gridWidgets = {};
+            _lastGridSignature = '';
+            const container = document.getElementById('gridContainer');
+            if (container) container.innerHTML = '';
+        }
+
+        function getGridTvSymbol(symbol) {
+            let cleanSymbol = symbol.replace('/', '');
+            if (TV_EXCHANGE_MAP[cleanSymbol]) return TV_EXCHANGE_MAP[cleanSymbol];
+            if (!cleanSymbol.endsWith('USDT') && !cleanSymbol.endsWith('BTC') && !cleanSymbol.endsWith('BUSD') && !cleanSymbol.endsWith('ETH')) {
+                cleanSymbol = cleanSymbol + 'USDT';
+            }
+            return 'BINANCE:' + cleanSymbol;
+        }
+
+        const gridTimeframes = [
+            { label: '1м', value: '1', tf: '1m' },
+            { label: '5м', value: '5', tf: '5m' },
+            { label: '15м', value: '15', tf: '15m' },
+            { label: '1ч', value: '60', tf: '1h' },
+            { label: '4ч', value: '240', tf: '4h' },
+            { label: '1д', value: 'D', tf: '1d' },
+        ];
+
+        let _lastGridSignature = '';
+
+        function renderGridView() {
+            const container = document.getElementById('gridContainer');
+            if (!container) return;
+            
+            const filteredMatches = isMarketView ? [] : getFilteredAndSortedMatches();
+            const items = isMarketView ? marketMovers.map(c => ({symbol: c.symbol, timeframe: '1h', structure_type: '', price_change_24h: c.price_change_24h})) : filteredMatches;
+            
+            if (items.length === 0) {
+                container.innerHTML = '<div class="col-span-full text-center text-gray-500 py-8">Нет данных для отображения</div>';
+                _lastGridSignature = '';
+                return;
+            }
+
+            const newSignature = items.map(m => m.symbol + '_' + m.timeframe + '_' + (m.structure_type||'') + '_' + (m.price_change_24h||0).toFixed(1)).join('|');
+            if (newSignature === _lastGridSignature) return;
+            _lastGridSignature = newSignature;
+
+            container.innerHTML = items.map((match, i) => {
+                const key = match.symbol;
+                const change = match.price_change_24h || 0;
+                const changeColor = change >= 0 ? 'text-green-400' : 'text-red-400';
+                const changeText = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+                const selectedInterval = gridSelectedTf[key] || timeframeToTvInterval[match.timeframe] || '60';
+                const typeBadge = match.structure_type ? `<span class="px-1.5 py-0.5 text-xs rounded ${getTypeColor(match.structure_type)}">${structureTypeLabels[match.structure_type] || match.structure_type}</span>` : '';
+                
+                return `
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden" data-grid-key="${key}">
+                    <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                        <div class="flex items-center gap-2">
+                            <span class="font-semibold text-sm">${match.symbol}</span>
+                            <span class="${changeColor} text-xs font-medium">${changeText}</span>
+                            ${typeBadge}
+                        </div>
+                        <div class="flex items-center gap-1">
+                            ${gridTimeframes.map(t => `
+                                <button onclick="event.stopPropagation(); changeGridTf('${key}', '${match.symbol}', '${t.value}', this)" 
+                                        class="px-1.5 py-0.5 text-xs rounded ${t.value === selectedInterval ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-600'}">${t.label}</button>
+                            `).join('')}
+                            <button onclick="event.stopPropagation(); openGridFullscreen('${match.symbol}')"
+                                    class="ml-1 p-1 hover:bg-blue-600/20 rounded text-blue-400 hover:text-blue-300" title="Полный экран">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="grid-chart-${i}" class="w-full" style="height: 220px;"></div>
+                </div>`;
+            }).join('');
+
+            items.forEach((match, i) => {
+                const key = match.symbol;
+                const tvSymbol = getGridTvSymbol(match.symbol);
+                const interval = gridSelectedTf[key] || timeframeToTvInterval[match.timeframe] || '60';
+                createMiniWidget(`grid-chart-${i}`, tvSymbol, interval, key);
+            });
+        }
+
+        function openGridFullscreen(symbol) {
+            const interval = gridSelectedTf[symbol] || '60';
+            const tfMap = {'1':'1m','3':'3m','5':'5m','15':'15m','30':'30m','60':'1h','240':'4h','D':'1d','W':'1w'};
+            openTradingViewChart(symbol, tfMap[interval] || '1h');
+        }
+
+        function createMiniWidget(containerId, tvSymbol, interval, key) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
+
+            const widgetDiv = document.createElement('div');
+            widgetDiv.className = 'tradingview-widget-container';
+            widgetDiv.style.height = '100%';
+            widgetDiv.style.width = '100%';
+
+            const innerDiv = document.createElement('div');
+            innerDiv.className = 'tradingview-widget-container__widget';
+            innerDiv.style.height = '100%';
+            innerDiv.style.width = '100%';
+            widgetDiv.appendChild(innerDiv);
+
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+            script.async = true;
+            script.textContent = JSON.stringify({
+                "autosize": true,
+                "symbol": tvSymbol,
+                "interval": interval,
+                "timezone": "Etc/UTC",
+                "theme": "dark",
+                "style": "1",
+                "locale": "ru",
+                "hide_top_toolbar": true,
+                "hide_legend": true,
+                "allow_symbol_change": false,
+                "save_image": false,
+                "calendar": false,
+                "hide_volume": true,
+                "support_host": "https://www.tradingview.com"
+            });
+            widgetDiv.appendChild(script);
+            container.appendChild(widgetDiv);
+
+            gridWidgets[key] = { containerId, tvSymbol, interval };
+        }
+
+        function changeGridTf(key, symbol, newInterval, btnEl) {
+            const card = btnEl.closest('[data-grid-key]');
+            if (!card) return;
+            
+            gridSelectedTf[key] = newInterval;
+            
+            card.querySelectorAll('.flex.items-center.gap-1 button:not(:last-child)').forEach(b => {
+                b.className = 'px-1.5 py-0.5 text-xs rounded text-gray-400 hover:text-white hover:bg-gray-600';
+            });
+            btnEl.className = 'px-1.5 py-0.5 text-xs rounded bg-blue-600 text-white';
+            
+            const chartContainer = card.querySelector('[id^="grid-chart-"]');
+            if (!chartContainer) return;
+            
+            const tvSymbol = getGridTvSymbol(symbol);
+            createMiniWidget(chartContainer.id, tvSymbol, newInterval, key);
         }
         
         function renderMarketView(table, count, thead) {
@@ -2006,44 +2216,8 @@
             }
         }
 
-        const timeframeToTvInterval = {
-            '1m': '1',
-            '3m': '3',
-            '5m': '5',
-            '15m': '15',
-            '30m': '30',
-            '1h': '60',
-            '4h': '240',
-            '1d': 'D',
-            '1w': 'W',
-        };
-
-        const TV_EXCHANGE_MAP = {
-            'HYPE': 'BYBIT:HYPEUSDT',
-            'CRO': 'CRYPTO:CROUSD',
-            'XAUT': 'BITFINEX:XAUTUST',
-            'CC': 'OKX:CCUSDT',
-            'RAIN': 'BYBIT:RAINUSDT',
-            'M': 'OKX:MUSDT',
-            'WBT': 'BYBIT:WBTUSDT',
-            'PI': 'OKX:PIUSDT',
-            'EOS': 'BYBIT:EOSUSDT',
-            'KAS': 'BYBIT:KASUSDT',
-            'JASMY': 'BYBIT:JASMYUSDT',
-            'ONDO': 'BYBIT:ONDOUSDT',
-        };
-
         function openTradingViewChart(symbol, timeframe) {
-            let cleanSymbol = symbol.replace('/', '');
-            let tvSymbol;
-            if (TV_EXCHANGE_MAP[cleanSymbol]) {
-                tvSymbol = TV_EXCHANGE_MAP[cleanSymbol];
-            } else {
-                if (!cleanSymbol.endsWith('USDT') && !cleanSymbol.endsWith('BTC') && !cleanSymbol.endsWith('BUSD') && !cleanSymbol.endsWith('ETH')) {
-                    cleanSymbol = cleanSymbol + 'USDT';
-                }
-                tvSymbol = 'BINANCE:' + cleanSymbol;
-            }
+            const tvSymbol = getGridTvSymbol(symbol);
             const interval = timeframeToTvInterval[timeframe] || '60';
             
             document.getElementById('tvChartTitle').textContent = symbol;
