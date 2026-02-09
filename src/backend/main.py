@@ -41,6 +41,7 @@ current_structure_id: Optional[int] = None
 scan_threshold: float = 50.0
 is_scanning: bool = False
 scan_task: Optional[asyncio.Task] = None
+_init_task: Optional[asyncio.Task] = None
 search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", or "candle_scan"
 search_pattern_type: Optional[str] = None
 search_type_filter: Optional[str] = None
@@ -295,14 +296,31 @@ async def run_initial_candle_scan():
     })
 
 
+async def ensure_scanner_initialized():
+    """Initialize scanner once, reuse for all subsequent scans."""
+    if scanner.initialized:
+        return
+    if scanner.is_running:
+        for _ in range(120):
+            if scanner.initialized:
+                return
+            await asyncio.sleep(0.5)
+        return
+    await scanner.start(on_update=on_market_update)
+
+
 async def run_continuous_scan():
-    """Run continuous market scanning."""
+    """Run continuous market scanning - blocks until cancelled."""
     global is_scanning
     
     try:
-        await scanner.start(on_update=on_market_update)
+        scanner.on_update_callback = on_market_update
+        if not scanner._poll_task or scanner._poll_task.done():
+            if scanner.initialized:
+                scanner._poll_task = asyncio.create_task(scanner._poll_loop())
+        await asyncio.Future()
     except asyncio.CancelledError:
-        await scanner.stop()
+        pass
     finally:
         is_scanning = False
 
@@ -633,7 +651,7 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter
+    global is_scanning, scan_task, _init_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter
     
     if data is None:
         data = StartScanRequest()
@@ -642,7 +660,7 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     search_pattern_type = data.pattern_type
     search_type_filter = data.type_filter
     search_candle_filter = data.candle_filter
-    search_timeframe_filter = data.timeframe_filter
+    search_timeframe_filter = data.timeframe_filter if data.timeframe_filter != "all" else None
     type_scan_seen = set()
     candle_scan_seen = set()
     
@@ -690,13 +708,28 @@ async def start_scan(data: Optional[StartScanRequest] = None):
         raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', 'manual', 'type_scan', or 'candle_scan'")
     
     if is_scanning:
-        await stop_scan()
-        await asyncio.sleep(0.5)
+        if scan_task:
+            scan_task.cancel()
+            try:
+                await scan_task
+            except asyncio.CancelledError:
+                pass
+        if _init_task and not _init_task.done():
+            _init_task.cancel()
+            try:
+                await _init_task
+            except asyncio.CancelledError:
+                pass
+            _init_task = None
     
     is_scanning = True
-    scan_task = asyncio.create_task(run_continuous_scan())
     
-    asyncio.create_task(_wait_and_run_initial_scan())
+    if scanner.initialized and len(scanner.symbols) > 0:
+        scan_task = asyncio.create_task(run_continuous_scan())
+        _init_task = asyncio.create_task(_run_initial_scan_now())
+    else:
+        scan_task = asyncio.create_task(run_continuous_scan())
+        _init_task = asyncio.create_task(_wait_and_run_initial_scan())
     
     return {
         "status": "started",
@@ -706,43 +739,55 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     }
 
 
+async def _run_initial_scan_now():
+    """Run initial scan immediately when scanner is already initialized."""
+    stats = scanner.get_structure_stats()
+    await broadcast_message({
+        "type": "scan_status",
+        "data": {"status": "scanning", "message": f"Загружено {stats['total_structures']} структур, сканирование..."}
+    })
+    await run_initial_scan()
+
+
 async def _wait_and_run_initial_scan():
     """Wait for scanner initialization to complete, then run initial scan."""
     await broadcast_message({
         "type": "scan_status",
         "data": {"status": "initializing", "message": "Загрузка рыночных данных..."}
     })
-    for i in range(120):
-        if getattr(scanner, 'initialized', False):
-            stats = scanner.get_structure_stats()
-            await broadcast_message({
-                "type": "scan_status",
-                "data": {"status": "scanning", "message": f"Загружено {stats['total_structures']} структур, сканирование..."}
-            })
-            await run_initial_scan()
-            return
-        await asyncio.sleep(0.5)
-    print("Warning: Scanner initialization timed out, running initial scan anyway")
+    await ensure_scanner_initialized()
+    if not is_scanning:
+        return
+    stats = scanner.get_structure_stats()
+    await broadcast_message({
+        "type": "scan_status",
+        "data": {"status": "scanning", "message": f"Загружено {stats['total_structures']} структур, сканирование..."}
+    })
     await run_initial_scan()
 
 
 @app.post("/api/stop-scan")
 async def stop_scan():
     """Stop market scanning."""
-    global is_scanning, scan_task
+    global is_scanning, scan_task, _init_task
     
     if not is_scanning:
         return {"status": "not_running"}
     
     is_scanning = False
+    if _init_task and not _init_task.done():
+        _init_task.cancel()
+        try:
+            await _init_task
+        except asyncio.CancelledError:
+            pass
+        _init_task = None
     if scan_task:
         scan_task.cancel()
         try:
             await scan_task
         except asyncio.CancelledError:
             pass
-    
-    await scanner.stop()
     
     return {"status": "stopped"}
 
