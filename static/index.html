@@ -2129,12 +2129,32 @@
             '1w': 'W',
         };
 
+        const TV_EXCHANGE_MAP = {
+            'HYPE': 'BYBIT:HYPEUSDT',
+            'CRO': 'CRYPTO:CROUSD',
+            'XAUT': 'BITFINEX:XAUTUST',
+            'CC': 'OKX:CCUSDT',
+            'RAIN': 'BYBIT:RAINUSDT',
+            'M': 'OKX:MUSDT',
+            'WBT': 'BYBIT:WBTUSDT',
+            'PI': 'OKX:PIUSDT',
+            'EOS': 'BYBIT:EOSUSDT',
+            'KAS': 'BYBIT:KASUSDT',
+            'JASMY': 'BYBIT:JASMYUSDT',
+            'ONDO': 'BYBIT:ONDOUSDT',
+        };
+
         function openTradingViewChart(symbol, timeframe) {
             let cleanSymbol = symbol.replace('/', '');
-            if (!cleanSymbol.endsWith('USDT') && !cleanSymbol.endsWith('BTC') && !cleanSymbol.endsWith('BUSD') && !cleanSymbol.endsWith('ETH')) {
-                cleanSymbol = cleanSymbol + 'USDT';
+            let tvSymbol;
+            if (TV_EXCHANGE_MAP[cleanSymbol]) {
+                tvSymbol = TV_EXCHANGE_MAP[cleanSymbol];
+            } else {
+                if (!cleanSymbol.endsWith('USDT') && !cleanSymbol.endsWith('BTC') && !cleanSymbol.endsWith('BUSD') && !cleanSymbol.endsWith('ETH')) {
+                    cleanSymbol = cleanSymbol + 'USDT';
+                }
+                tvSymbol = 'BINANCE:' + cleanSymbol;
             }
-            const tvSymbol = 'BINANCE:' + cleanSymbol;
             const interval = timeframeToTvInterval[timeframe] || '60';
             
             document.getElementById('tvChartTitle').textContent = symbol;
