@@ -44,8 +44,8 @@
             <p class="text-gray-400 mt-2">Поиск похожих ценовых структур на криптовалютных рынках в реальном времени</p>
         </header>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div class="lg:col-span-1 space-y-6 lg:max-h-screen lg:overflow-y-auto lg:sticky lg:top-4">
+        <div id="mainGrid" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div id="sidebarPanel" class="lg:col-span-1 space-y-6 lg:max-h-screen lg:overflow-y-auto lg:sticky lg:top-4">
                 <div class="bg-gray-800 rounded-lg p-6">
                     <h2 class="text-xl font-semibold mb-4">Загрузить График</h2>
                     <div id="dropzone" class="dropzone rounded-lg p-8 text-center cursor-pointer">
@@ -387,7 +387,13 @@
             <div class="lg:col-span-2">
                 <div class="bg-gray-800 rounded-lg p-6">
                     <div class="flex justify-between items-center mb-4">
-                        <h2 class="text-xl font-semibold">Совпадения</h2>
+                        <div class="flex items-center gap-2">
+                            <button id="toggleSidebar" onclick="toggleSidebar()" class="p-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white transition" title="Скрыть/показать панель">
+                                <svg id="sidebarIconHide" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+                                <svg id="sidebarIconShow" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                            </button>
+                            <h2 class="text-xl font-semibold">Совпадения</h2>
+                        </div>
                         <div class="flex items-center gap-4">
                             <select id="typeFilter" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
                                 <option value="">Все типы</option>
@@ -641,6 +647,7 @@
         let currentView = 'table';
         let gridWidgets = {};
         let gridSelectedTf = {};
+        let sidebarHidden = false;
         
         let manualPivots = [];
         let pivotMode = 'high';
@@ -653,18 +660,51 @@
         };
 
         const TV_EXCHANGE_MAP = {
-            'HYPE': 'BYBIT:HYPEUSDT',
+            'HYPE': 'MEXC:HYPEUSDT',
             'CRO': 'CRYPTO:CROUSD',
-            'XAUT': 'BITFINEX:XAUTUST',
+            'XAUT': 'BINANCE:PAXGUSDT',
             'CC': 'OKX:CCUSDT',
-            'RAIN': 'BYBIT:RAINUSDT',
-            'M': 'OKX:MUSDT',
-            'WBT': 'BYBIT:WBTUSDT',
+            'RAIN': 'MEXC:RAINUSDT',
+            'M': 'MEXC:MUSDT',
+            'WBT': 'WHITEBIT:WBTUSDT',
             'PI': 'OKX:PIUSDT',
-            'EOS': 'BYBIT:EOSUSDT',
-            'KAS': 'BYBIT:KASUSDT',
-            'JASMY': 'BYBIT:JASMYUSDT',
-            'ONDO': 'BYBIT:ONDOUSDT',
+            'EOS': 'BINANCE:EOSUSDT',
+            'KAS': 'MEXC:KASUSDT',
+            'JASMY': 'BINANCE:JASMYUSDT',
+            'ONDO': 'BINANCE:ONDOUSDT',
+            'LEO': 'BITFINEX:LEOUSD',
+            'DAI': 'BINANCE:DAIUSDT',
+            'OKB': 'OKX:OKBUSDT',
+            'GT': 'GATEIO:GTUSDT',
+            'MNT': 'BYBIT:MNTUSDT',
+            'RENDER': 'BINANCE:RENDERUSDT',
+            'TAO': 'BINANCE:TAOUSDT',
+            'IMX': 'BINANCE:IMXUSDT',
+            'FET': 'BINANCE:FETUSDT',
+            'STX': 'BINANCE:STXUSDT',
+            'AAVE': 'BINANCE:AAVEUSDT',
+            'ALGO': 'BINANCE:ALGOUSDT',
+            'RUNE': 'BINANCE:RUNEUSDT',
+            'GRT': 'BINANCE:GRTUSDT',
+            'FLR': 'BINANCE:FLRUSDT',
+            'BEAM': 'MEXC:BEAMUSDT',
+            'QNT': 'BINANCE:QNTUSDT',
+            'BSV': 'BITFINEX:BSVUSD',
+            'FLOW': 'BINANCE:FLOWUSDT',
+            'THETA': 'BINANCE:THETAUSDT',
+            'AXS': 'BINANCE:AXSUSDT',
+            'MANA': 'BINANCE:MANAUSDT',
+            'SAND': 'BINANCE:SANDUSDT',
+            'HNT': 'BYBIT:HNTUSDT',
+            'IOTA': 'BINANCE:IOTAUSDT',
+            'KAIA': 'BINANCE:KAIAUSDT',
+            'BGB': 'BITGET:BGBUSDT',
+            'FARTCOIN': 'MEXC:FARTCOINUSDT',
+            'SPX': 'MEXC:SPXUSDT',
+            'VIRTUAL': 'MEXC:VIRTUALUSDT',
+            'PENGU': 'BINANCE:PENGUUSDT',
+            'TRUMP': 'MEXC:TRUMPUSDT',
+            'PAXG': 'BINANCE:PAXGUSDT',
         };
 
         const structureTypeLabels = {
@@ -921,10 +961,54 @@
         function getGridTvSymbol(symbol) {
             let cleanSymbol = symbol.replace('/', '');
             if (TV_EXCHANGE_MAP[cleanSymbol]) return TV_EXCHANGE_MAP[cleanSymbol];
+            let base = cleanSymbol;
+            for (const suffix of ['USDT', 'BUSD', 'BTC', 'ETH', 'USD', 'USDC']) {
+                if (cleanSymbol.endsWith(suffix) && cleanSymbol.length > suffix.length) {
+                    base = cleanSymbol.slice(0, -suffix.length);
+                    break;
+                }
+            }
+            if (base !== cleanSymbol && TV_EXCHANGE_MAP[base]) return TV_EXCHANGE_MAP[base];
             if (!cleanSymbol.endsWith('USDT') && !cleanSymbol.endsWith('BTC') && !cleanSymbol.endsWith('BUSD') && !cleanSymbol.endsWith('ETH')) {
                 cleanSymbol = cleanSymbol + 'USDT';
             }
             return 'BINANCE:' + cleanSymbol;
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebarPanel');
+            const mainGrid = document.getElementById('mainGrid');
+            const contentPanel = document.querySelectorAll('#mainGrid > div')[1];
+            const iconHide = document.getElementById('sidebarIconHide');
+            const iconShow = document.getElementById('sidebarIconShow');
+            const gridContainer = document.getElementById('gridContainer');
+            sidebarHidden = !sidebarHidden;
+            if (sidebarHidden) {
+                sidebar.classList.add('hidden');
+                mainGrid.classList.remove('lg:grid-cols-3');
+                mainGrid.classList.add('lg:grid-cols-1');
+                if (contentPanel) contentPanel.classList.remove('lg:col-span-2');
+                if (gridContainer) {
+                    gridContainer.classList.remove('xl:grid-cols-3');
+                    gridContainer.classList.add('xl:grid-cols-4');
+                }
+                iconHide.classList.add('hidden');
+                iconShow.classList.remove('hidden');
+            } else {
+                sidebar.classList.remove('hidden');
+                mainGrid.classList.remove('lg:grid-cols-1');
+                mainGrid.classList.add('lg:grid-cols-3');
+                if (contentPanel) contentPanel.classList.add('lg:col-span-2');
+                if (gridContainer) {
+                    gridContainer.classList.remove('xl:grid-cols-4');
+                    gridContainer.classList.add('xl:grid-cols-3');
+                }
+                iconHide.classList.remove('hidden');
+                iconShow.classList.add('hidden');
+            }
+            if (currentView === 'grid') {
+                setTimeout(() => renderGridView(true), 100);
+            }
         }
 
         const gridTimeframes = [
