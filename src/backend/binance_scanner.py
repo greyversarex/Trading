@@ -316,6 +316,30 @@ class BinanceScanner:
     
     _invalid_symbols: set = set()
     
+    async def _fetch_candles_session(self, session: aiohttp.ClientSession, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
+        """Fetch candles using a shared session for batch operations."""
+        if self._use_real_data and symbol not in self._invalid_symbols:
+            binance_symbol = f"{symbol}USDT"
+            binance_interval = self.BINANCE_TF_MAP.get(interval, interval)
+            params = {"symbol": binance_symbol, "interval": binance_interval, "limit": limit}
+            try:
+                async with session.get(self.BINANCE_KLINES_URL, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        candles = []
+                        for k in data:
+                            candles.append(CandleData(
+                                open_time=int(k[0]), open=float(k[1]), high=float(k[2]),
+                                low=float(k[3]), close=float(k[4]), volume=float(k[5]),
+                                close_time=int(k[6])
+                            ))
+                        return candles
+                    else:
+                        self._invalid_symbols.add(symbol)
+            except Exception:
+                self._invalid_symbols.add(symbol)
+        return self._generate_realistic_candles(symbol, interval, limit)
+
     async def fetch_candles(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
         """Fetch candle data from Binance API, fall back to simulation if unavailable."""
         if self._use_real_data and symbol not in self._invalid_symbols:
@@ -351,7 +375,7 @@ class BinanceScanner:
             "last_error": self.last_error
         }
 
-    async def initialize_symbols(self):
+    async def initialize_symbols(self, progress_callback=None):
         """Initialize symbol list and fetch initial candle data."""
         print("Initializing scanner...")
         self._invalid_symbols = set()
@@ -362,7 +386,7 @@ class BinanceScanner:
             self.symbol_data[symbol] = SymbolData(symbol=symbol)
         
         print(f"Fetching real market data from Binance API...")
-        await self._update_all_candles()
+        await self._update_all_candles(progress_callback=progress_callback)
         self._update_all_structures()
         
         real_symbols = set()
@@ -385,14 +409,39 @@ class BinanceScanner:
         stats = self.get_structure_stats()
         print(f"Initialized: {stats['symbols_with_data']}/{stats['total_symbols']} symbols with {stats['total_structures']} structures")
     
-    async def _update_all_candles(self):
-        """Fetch candles for all symbols and timeframes."""
+    async def _update_all_candles(self, progress_callback=None):
+        """Fetch candles for all symbols and timeframes using concurrent batches."""
+        tasks = []
         for symbol in self.symbols:
             for timeframe in self.TIMEFRAMES.keys():
-                await self._update_symbol_candles(symbol, timeframe)
-                if self._use_real_data and symbol not in self._invalid_symbols:
-                    await asyncio.sleep(0.12)
+                tasks.append((symbol, timeframe))
+        
+        total = len(tasks)
+        done = 0
+        batch_size = 10
+        
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            for i in range(0, total, batch_size):
+                batch = tasks[i:i+batch_size]
+                coros = [self._update_symbol_candles_session(session, sym, tf) for sym, tf in batch]
+                await asyncio.gather(*coros, return_exceptions=True)
+                done += len(batch)
+                if progress_callback:
+                    await progress_callback(done, total)
+                if self._use_real_data:
+                    await asyncio.sleep(0.15)
     
+    async def _update_symbol_candles_session(self, session: aiohttp.ClientSession, symbol: str, timeframe: str):
+        """Update candles for a specific symbol/timeframe using shared session."""
+        try:
+            limit = self.TIMEFRAME_LIMITS.get(timeframe, 100)
+            candles = await self._fetch_candles_session(session, symbol, timeframe, limit)
+            if candles:
+                self.symbol_data[symbol].candles[timeframe] = candles
+                self.symbol_data[symbol].last_update = time.time()
+        except Exception as e:
+            pass
+
     async def _update_symbol_candles(self, symbol: str, timeframe: str):
         """Update candles for a specific symbol/timeframe."""
         try:
@@ -454,7 +503,7 @@ class BinanceScanner:
                 print(f"Error in poll loop: {e}")
                 await asyncio.sleep(10)
     
-    async def start(self, on_update: Optional[Callable] = None):
+    async def start(self, on_update: Optional[Callable] = None, progress_callback=None):
         """Start the scanner."""
         if self.is_running:
             return
@@ -463,7 +512,7 @@ class BinanceScanner:
         self.initialized = False
         self.on_update_callback = on_update
         
-        await self.initialize_symbols()
+        await self.initialize_symbols(progress_callback=progress_callback)
         self.initialized = True
         
         self._poll_task = asyncio.create_task(self._poll_loop())

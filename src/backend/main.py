@@ -42,6 +42,7 @@ scan_threshold: float = 50.0
 is_scanning: bool = False
 scan_task: Optional[asyncio.Task] = None
 _init_task: Optional[asyncio.Task] = None
+_pending_initial_scan: Optional[asyncio.Task] = None
 search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", or "candle_scan"
 search_pattern_type: Optional[str] = None
 search_type_filter: Optional[str] = None
@@ -306,7 +307,7 @@ async def ensure_scanner_initialized():
                 return
             await asyncio.sleep(0.5)
         return
-    await scanner.start(on_update=on_market_update)
+    await scanner.start(on_update=on_market_update, progress_callback=_init_progress_callback)
 
 
 async def run_continuous_scan():
@@ -651,7 +652,7 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, _init_task, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter
+    global is_scanning, scan_task, _init_task, _pending_initial_scan, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter
     
     if data is None:
         data = StartScanRequest()
@@ -714,22 +715,25 @@ async def start_scan(data: Optional[StartScanRequest] = None):
                 await scan_task
             except asyncio.CancelledError:
                 pass
-        if _init_task and not _init_task.done():
-            _init_task.cancel()
-            try:
-                await _init_task
-            except asyncio.CancelledError:
-                pass
-            _init_task = None
     
     is_scanning = True
     
+    if _pending_initial_scan and not _pending_initial_scan.done():
+        _pending_initial_scan.cancel()
+        try:
+            await _pending_initial_scan
+        except asyncio.CancelledError:
+            pass
+    
     if scanner.initialized and len(scanner.symbols) > 0:
         scan_task = asyncio.create_task(run_continuous_scan())
-        _init_task = asyncio.create_task(_run_initial_scan_now())
+        _pending_initial_scan = asyncio.create_task(_run_initial_scan_now())
     else:
         scan_task = asyncio.create_task(run_continuous_scan())
-        _init_task = asyncio.create_task(_wait_and_run_initial_scan())
+        if not _init_task or _init_task.done():
+            _init_task = asyncio.create_task(_wait_and_run_initial_scan())
+        else:
+            _pending_initial_scan = asyncio.create_task(_wait_init_then_scan())
     
     return {
         "status": "started",
@@ -764,6 +768,23 @@ async def _wait_and_run_initial_scan():
         "data": {"status": "scanning", "message": f"Загружено {stats['total_structures']} структур, сканирование..."}
     })
     await run_initial_scan()
+
+
+async def _wait_init_then_scan():
+    """Wait for existing initialization, then run initial scan with current params."""
+    await ensure_scanner_initialized()
+    if not is_scanning:
+        return
+    await run_initial_scan()
+
+
+async def _init_progress_callback(done, total):
+    """Send progress updates during scanner initialization."""
+    pct = int(done / total * 100) if total > 0 else 0
+    await broadcast_message({
+        "type": "scan_status",
+        "data": {"status": "initializing", "message": f"Загрузка данных: {pct}% ({done}/{total})"}
+    })
 
 
 @app.post("/api/stop-scan")
