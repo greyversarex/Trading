@@ -27,6 +27,7 @@ class DetectedLevel:
     quality_score: float
     coverage: float
     price_at_last: float
+    breakout_count: int = 0
 
 
 class LevelDetector:
@@ -112,6 +113,7 @@ class LevelDetector:
             return []
 
         tolerance = price_range * (self.deviation_pct / 100.0)
+        breakout_threshold = price_range * 0.003
 
         candidates: List[DetectedLevel] = []
 
@@ -135,6 +137,13 @@ class LevelDetector:
                 if len(touches) < min_touches:
                     continue
 
+                breakout_count = self._count_breakouts(
+                    slope, intercept, closes, breakout_threshold, line_type
+                )
+
+                if breakout_count >= 3:
+                    continue
+
                 avg_dev = np.mean([t.deviation for t in touches])
                 max_dev = np.max([t.deviation for t in touches])
                 avg_dev_pct = (avg_dev / price_range) * 100
@@ -151,6 +160,10 @@ class LevelDetector:
                     + coverage * 25
                     + spacing_score * 25
                 )
+
+                breakout_penalty = breakout_count * 15
+                quality -= breakout_penalty
+
                 quality = max(0, min(100, quality))
 
                 line_val_last = slope * (n - 1) + intercept
@@ -172,6 +185,7 @@ class LevelDetector:
                     quality_score=round(quality, 2),
                     coverage=round(coverage, 3),
                     price_at_last=round(line_val_last, 8),
+                    breakout_count=breakout_count,
                 ))
 
         return candidates
@@ -221,6 +235,40 @@ class LevelDetector:
                 ))
 
         return touches
+
+    def _count_breakouts(
+        self,
+        slope: float,
+        intercept: float,
+        closes: np.ndarray,
+        threshold: float,
+        line_type: str,
+    ) -> int:
+        n = len(closes)
+        breakout_count = 0
+        min_gap = max(2, n // 20)
+        last_breakout_idx = -min_gap
+
+        consecutive = 0
+        for i in range(n):
+            line_val = slope * i + intercept
+            close_price = float(closes[i])
+
+            if line_type == "resistance":
+                violation = close_price - line_val
+            else:
+                violation = line_val - close_price
+
+            if violation > threshold:
+                consecutive += 1
+                if consecutive >= 2 and (i - last_breakout_idx) >= min_gap:
+                    breakout_count += 1
+                    last_breakout_idx = i
+                    consecutive = 0
+            else:
+                consecutive = 0
+
+        return breakout_count
 
     def _spacing_score(self, indices: List[int], total_len: int) -> float:
         if len(indices) < 2:
