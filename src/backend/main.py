@@ -1264,8 +1264,12 @@ async def get_candles_data(symbol: str, timeframe: str):
 async def get_debug_structure(symbol: str, timeframe: str):
     """Get candles + pivot points + structure info for debug visualization."""
     candles = scanner.get_candles(symbol, timeframe)
+
     if not candles:
-        return {"candles": [], "pivots": [], "structure_type": "unknown"}
+        candles = await scanner._fetch_binance_klines(symbol, timeframe, limit=100)
+
+    if not candles:
+        return {"candles": [], "pivots": [], "structure_type": "unknown", "pattern_confidence": 0}
 
     ohlc = []
     for c in candles:
@@ -1296,6 +1300,28 @@ async def get_debug_structure(symbol: str, timeframe: str):
                         "is_high": p.is_high,
                         "confidence": round(p.confidence, 3),
                     })
+
+    if not pivots and len(ohlc) > 0:
+        import numpy as np
+        closes = np.array([c.close for c in candles])
+        normalized = structure_extractor.normalize_line(closes)
+        raw_pivots = structure_extractor.detect_pivots(normalized)
+        for p in raw_pivots:
+            if 0 <= p.index < len(ohlc):
+                price_val = candles[p.index].high if p.is_high else candles[p.index].low
+                pivots.append({
+                    "index": p.index,
+                    "time": ohlc[p.index]["time"],
+                    "value": price_val,
+                    "is_high": p.is_high,
+                    "confidence": round(p.confidence, 3),
+                })
+        if len(raw_pivots) > 0:
+            trend = structure_extractor.calculate_trend(normalized)
+            compression = structure_extractor.calculate_compression(normalized, raw_pivots)
+            st, pc = structure_extractor.classify_structure(trend, compression, raw_pivots, normalized)
+            structure_type = st.value
+            pattern_confidence = round(pc * 100, 1)
 
     return {
         "candles": ohlc,
