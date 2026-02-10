@@ -1974,7 +1974,13 @@
             try {
                 matches = [];
                 matchIdCounter = 0;
+                currentFilter = '';
                 renderMatches();
+                
+                const typeFilterEl = document.getElementById('typeFilter');
+                if (typeFilterEl.value !== structureType) {
+                    typeFilterEl.value = structureType;
+                }
                 
                 highlightActiveTypeBtn(structureType);
                 
@@ -2547,9 +2553,13 @@
                 renderMatches();
             });
             
-            document.getElementById('typeFilter').addEventListener('change', (e) => {
+            document.getElementById('typeFilter').addEventListener('change', async (e) => {
                 currentFilter = e.target.value;
-                renderMatches();
+                if (currentFilter) {
+                    await startTypeScan(currentFilter);
+                } else {
+                    renderMatches();
+                }
             });
             
             document.getElementById('sortBy').addEventListener('change', async (e) => {
