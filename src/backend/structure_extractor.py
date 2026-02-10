@@ -37,6 +37,7 @@ class PivotPoint:
     is_high: bool
     relative_position: float
     prominence: float = 0.0
+    confidence: float = 0.0
     
     def __lt__(self, other):
         if not isinstance(other, PivotPoint):
@@ -71,6 +72,14 @@ class StructureFeatures:
     structure_type: StructureType
     feature_vector: np.ndarray
     quality_score: float = 0.0
+    pattern_confidence: float = 0.0
+    pivot_slopes: List[float] = field(default_factory=list)
+    pivot_angles: List[float] = field(default_factory=list)
+    symmetry_score: float = 0.0
+    convergence_rate: float = 0.0
+    breakout_strength: float = 0.0
+    avg_pivot_confidence: float = 0.0
+    trend_consistency: float = 0.0
 
 
 class StructureExtractor:
@@ -105,33 +114,45 @@ class StructureExtractor:
         if n < 11:
             return line.copy()
         
-        diffs = np.abs(np.diff(line))
-        volatility = np.std(diffs)
+        window1 = min(5, n - 1)
+        if window1 % 2 == 0:
+            window1 -= 1
+        if window1 < 3:
+            window1 = 3
+        
+        poly_order1 = min(2, window1 - 1)
+        
+        try:
+            smoothed = savgol_filter(line, window1, poly_order1)
+        except:
+            smoothed = line.copy()
+        
+        diffs = np.abs(np.diff(smoothed))
         mean_diff = np.mean(diffs)
+        volatility = np.std(diffs)
         
         if mean_diff > 0:
             noise_ratio = volatility / mean_diff
         else:
             noise_ratio = 0
         
-        if noise_ratio > 2.0:
-            window = min(11, n - 1)
-        elif noise_ratio > 1.0:
-            window = min(9, n - 1)
-        else:
-            window = min(5, n - 1)
-        
-        if window % 2 == 0:
-            window -= 1
-        if window < 3:
-            window = 3
-        
-        poly_order = min(2, window - 1)
-        
-        try:
-            smoothed = savgol_filter(line, window, poly_order)
-        except:
-            smoothed = line.copy()
+        if noise_ratio > 1.5:
+            if noise_ratio > 2.0:
+                window2 = min(11, n - 1)
+            else:
+                window2 = min(9, n - 1)
+            
+            if window2 % 2 == 0:
+                window2 -= 1
+            if window2 < 3:
+                window2 = 3
+            
+            poly_order2 = min(2, window2 - 1)
+            
+            try:
+                smoothed = savgol_filter(smoothed, window2, poly_order2)
+            except:
+                pass
         
         return smoothed
     
@@ -142,18 +163,160 @@ class StructureExtractor:
         if order is None:
             order = self._adaptive_order(line)
         
+        zigzag_pivots = self._zigzag_pivots(line)
+        
         smoothed = self._adaptive_smoothing(line)
+        multi_scale_pivots = self._multi_scale_pivots(smoothed, line, adaptive_order=order)
         
-        pivots = self._multi_scale_pivots(smoothed, line, adaptive_order=order)
-        
-        if len(pivots) < 3:
-            pivots = self._fallback_pivots(line)
+        if len(zigzag_pivots) >= 3:
+            pivots = list(zigzag_pivots)
+            min_dist = max(3, len(line) // 25)
+            for mp in multi_scale_pivots:
+                if mp.prominence > 0.15:
+                    too_close = False
+                    for zp in pivots:
+                        if abs(mp.index - zp.index) < min_dist:
+                            too_close = True
+                            break
+                    if not too_close:
+                        pivots.append(mp)
+            pivots.sort(key=lambda p: p.index)
+        else:
+            pivots = multi_scale_pivots if len(multi_scale_pivots) >= 3 else self._fallback_pivots(line)
         
         pivots = self._calculate_prominence(pivots, line)
         pivots = self._filter_redundant_pivots(pivots, line)
+        pivots = self._calculate_confidence(pivots, line, multi_scale_pivots)
         
         if len(pivots) > self.num_pivots:
             pivots = self._select_important_pivots(pivots, line)
+        
+        return pivots
+    
+    def _zigzag_pivots(self, line: np.ndarray) -> List[PivotPoint]:
+        n = len(line)
+        if n < 11:
+            return []
+        
+        window = max(5, n // 10)
+        abs_diffs = np.abs(np.diff(line))
+        if len(abs_diffs) < window:
+            atr = np.mean(abs_diffs)
+        else:
+            rolling_sum = np.convolve(abs_diffs, np.ones(window), mode='valid')
+            atr = np.mean(rolling_sum / window)
+        
+        min_swing = max(atr * 2.0, 0.02)
+        min_spacing = max(3, n // 20)
+        
+        pivots = []
+        last_high_idx = 0
+        last_low_idx = 0
+        last_high_val = line[0]
+        last_low_val = line[0]
+        direction = 0
+        
+        for i in range(1, n):
+            if direction >= 0:
+                if line[i] > last_high_val:
+                    last_high_idx = i
+                    last_high_val = line[i]
+                elif last_high_val - line[i] >= min_swing:
+                    if direction == 0 and i > min_spacing:
+                        if last_high_idx >= min_spacing or not pivots:
+                            pivots.append(PivotPoint(
+                                index=last_high_idx,
+                                value=line[last_high_idx],
+                                is_high=True,
+                                relative_position=last_high_idx / n
+                            ))
+                    elif direction > 0:
+                        if not pivots or (last_high_idx - pivots[-1].index) >= min_spacing:
+                            pivots.append(PivotPoint(
+                                index=last_high_idx,
+                                value=line[last_high_idx],
+                                is_high=True,
+                                relative_position=last_high_idx / n
+                            ))
+                    direction = -1
+                    last_low_idx = i
+                    last_low_val = line[i]
+            
+            if direction <= 0:
+                if line[i] < last_low_val:
+                    last_low_idx = i
+                    last_low_val = line[i]
+                elif line[i] - last_low_val >= min_swing:
+                    if direction == 0 and i > min_spacing:
+                        if last_low_idx >= min_spacing or not pivots:
+                            pivots.append(PivotPoint(
+                                index=last_low_idx,
+                                value=line[last_low_idx],
+                                is_high=False,
+                                relative_position=last_low_idx / n
+                            ))
+                    elif direction < 0:
+                        if not pivots or (last_low_idx - pivots[-1].index) >= min_spacing:
+                            pivots.append(PivotPoint(
+                                index=last_low_idx,
+                                value=line[last_low_idx],
+                                is_high=False,
+                                relative_position=last_low_idx / n
+                            ))
+                    direction = 1
+                    last_high_idx = i
+                    last_high_val = line[i]
+        
+        pivots.sort(key=lambda p: p.index)
+        return pivots
+    
+    def _calculate_confidence(self, pivots: List[PivotPoint], line: np.ndarray, 
+                              multi_scale_pivots: List[PivotPoint]) -> List[PivotPoint]:
+        if not pivots or len(line) == 0:
+            return pivots
+        
+        line_range = np.max(line) - np.min(line)
+        if line_range == 0:
+            return pivots
+        
+        ms_indices = set(mp.index for mp in multi_scale_pivots)
+        
+        for i, p in enumerate(pivots):
+            prominence_score = min(1.0, p.prominence * 2.0)
+            
+            confirmation_count = 0
+            for ms_idx in ms_indices:
+                if abs(ms_idx - p.index) <= 3:
+                    confirmation_count += 1
+            confirmation_score = min(1.0, confirmation_count / 3.0)
+            
+            if i > 0 and i < len(pivots) - 1:
+                left_dist = pivots[i].index - pivots[i - 1].index
+                right_dist = pivots[i + 1].index - pivots[i].index
+                min_dist = min(left_dist, right_dist)
+            elif i > 0:
+                min_dist = pivots[i].index - pivots[i - 1].index
+            elif i < len(pivots) - 1:
+                min_dist = pivots[i + 1].index - pivots[i].index
+            else:
+                min_dist = len(line)
+            distance_score = min(1.0, min_dist / (len(line) * 0.15))
+            
+            ctx_start = max(0, p.index - len(line) // 10)
+            ctx_end = min(len(line), p.index + len(line) // 10)
+            local_segment = line[ctx_start:ctx_end]
+            if len(local_segment) > 0:
+                local_range = np.max(local_segment) - np.min(local_segment)
+                amplitude_score = min(1.0, (local_range / line_range) * 1.5)
+            else:
+                amplitude_score = 0.0
+            
+            p.confidence = (
+                prominence_score * 0.35 +
+                confirmation_score * 0.25 +
+                distance_score * 0.20 +
+                amplitude_score * 0.20
+            )
         
         return pivots
     
@@ -269,7 +432,9 @@ class StructureExtractor:
             return pivots
         
         line_range = np.max(line) - np.min(line)
-        min_amplitude = 0.05
+        abs_diffs = np.abs(np.diff(line))
+        atr = np.mean(abs_diffs) if len(abs_diffs) > 0 else 0.0
+        min_amplitude = max(0.04, atr * 1.5)
         
         filtered = [pivots[0]]
         
@@ -278,16 +443,28 @@ class StructureExtractor:
             curr = pivots[i]
             
             if curr.is_high == prev.is_high:
-                if curr.is_high and curr.value > prev.value:
+                if curr.is_high and curr.value >= prev.value:
                     filtered[-1] = curr
-                elif not curr.is_high and curr.value < prev.value:
+                elif not curr.is_high and curr.value <= prev.value:
                     filtered[-1] = curr
             else:
                 value_diff = abs(curr.value - prev.value)
                 if line_range > 0 and value_diff / line_range >= min_amplitude:
                     filtered.append(curr)
         
-        return filtered
+        alternated = [filtered[0]]
+        for i in range(1, len(filtered)):
+            if filtered[i].is_high == alternated[-1].is_high:
+                if filtered[i].is_high:
+                    if filtered[i].value > alternated[-1].value:
+                        alternated[-1] = filtered[i]
+                else:
+                    if filtered[i].value < alternated[-1].value:
+                        alternated[-1] = filtered[i]
+            else:
+                alternated.append(filtered[i])
+        
+        return alternated
     
     def _select_important_pivots(self, pivots: List[PivotPoint], line: np.ndarray) -> List[PivotPoint]:
         if len(pivots) <= self.num_pivots:
@@ -733,8 +910,133 @@ class StructureExtractor:
         
         return False, "", 0.0
     
+    def calculate_pivot_slopes(self, pivots: List[PivotPoint], line: np.ndarray) -> List[float]:
+        if len(pivots) < 2:
+            return []
+        slopes = []
+        n = len(line)
+        for i in range(1, len(pivots)):
+            dx = (pivots[i].index - pivots[i-1].index) / max(1, n)
+            dy = pivots[i].value - pivots[i-1].value
+            slope = dy / (dx + 1e-10)
+            slopes.append(float(np.tanh(slope)))
+        return slopes
+
+    def calculate_pivot_angles(self, pivots: List[PivotPoint], line: np.ndarray) -> List[float]:
+        if len(pivots) < 3:
+            return []
+        angles = []
+        n = len(line)
+        price_range = np.max(line) - np.min(line) if len(line) > 0 else 1.0
+        for i in range(1, len(pivots) - 1):
+            dx1 = (pivots[i].index - pivots[i-1].index) / max(1, n)
+            dy1 = (pivots[i].value - pivots[i-1].value) / (price_range + 1e-10)
+            dx2 = (pivots[i+1].index - pivots[i].index) / max(1, n)
+            dy2 = (pivots[i+1].value - pivots[i].value) / (price_range + 1e-10)
+            
+            dot = dx1 * dx2 + dy1 * dy2
+            cross = dx1 * dy2 - dy1 * dx2
+            angle = np.arctan2(cross, dot)
+            angles.append(float(angle / np.pi))
+        return angles
+
+    def calculate_symmetry(self, pivots: List[PivotPoint], line: np.ndarray) -> float:
+        if len(pivots) < 4:
+            return 0.0
+        n = len(pivots)
+        mid = n // 2
+        left_half = pivots[:mid]
+        right_half = pivots[mid:]
+        right_reversed = list(reversed(right_half))
+        
+        price_range = np.max(line) - np.min(line) if len(line) > 0 else 1.0
+        if price_range == 0:
+            return 0.0
+        
+        compare_len = min(len(left_half), len(right_reversed))
+        if compare_len == 0:
+            return 0.0
+        
+        symmetry_sum = 0.0
+        for i in range(compare_len):
+            val_diff = abs(left_half[i].value - right_reversed[i].value) / price_range
+            type_match = 1.0 if left_half[i].is_high == right_reversed[i].is_high else 0.0
+            symmetry_sum += (1.0 - min(1.0, val_diff)) * 0.5 + type_match * 0.5
+        
+        return symmetry_sum / compare_len
+
+    def calculate_convergence_rate(self, pivots: List[PivotPoint], line: np.ndarray) -> float:
+        highs = [p for p in pivots if p.is_high]
+        lows = [p for p in pivots if not p.is_high]
+        if len(highs) < 2 or len(lows) < 2:
+            return 0.0
+        
+        price_range = np.max(line) - np.min(line) if len(line) > 0 else 1.0
+        if price_range == 0:
+            return 0.0
+        
+        spread_start = abs(highs[0].value - lows[0].value)
+        spread_end = abs(highs[-1].value - lows[-1].value)
+        
+        if spread_start == 0:
+            return 0.0
+        
+        rate = (spread_start - spread_end) / spread_start
+        return float(np.clip(rate, -1.0, 1.0))
+
+    def calculate_breakout_strength(self, line: np.ndarray) -> float:
+        n = len(line)
+        if n < 15:
+            return 0.0
+        
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return 0.0
+        
+        base_portion = line[:int(n * 0.75)]
+        end_portion = line[int(n * 0.75):]
+        
+        if len(base_portion) < 2 or len(end_portion) < 2:
+            return 0.0
+        
+        base_range = np.max(base_portion) - np.min(base_portion)
+        base_volatility = np.std(np.diff(base_portion))
+        
+        end_move = abs(end_portion[-1] - end_portion[0]) / price_range
+        end_volatility = np.std(np.diff(end_portion))
+        
+        volatility_expansion = (end_volatility / (base_volatility + 1e-10))
+        range_break = max(0, (end_portion[-1] - np.max(base_portion)) / price_range) + \
+                      max(0, (np.min(base_portion) - end_portion[-1]) / price_range)
+        
+        strength = min(1.0, end_move * 0.3 + min(3.0, volatility_expansion) / 3.0 * 0.3 + range_break * 0.4)
+        return float(strength)
+
+    def calculate_trend_consistency(self, pivots: List[PivotPoint], line: np.ndarray) -> float:
+        if len(pivots) < 3:
+            return 0.0
+        
+        highs = [p for p in pivots if p.is_high]
+        lows = [p for p in pivots if not p.is_high]
+        
+        hh_score = 0.0
+        if len(highs) >= 2:
+            hh_count = sum(1 for i in range(1, len(highs)) if highs[i].value > highs[i-1].value)
+            ll_count = sum(1 for i in range(1, len(highs)) if highs[i].value < highs[i-1].value)
+            total = len(highs) - 1
+            hh_score = max(hh_count, ll_count) / total if total > 0 else 0.0
+        
+        hl_score = 0.0
+        if len(lows) >= 2:
+            hl_count = sum(1 for i in range(1, len(lows)) if lows[i].value > lows[i-1].value)
+            ll_count = sum(1 for i in range(1, len(lows)) if lows[i].value < lows[i-1].value)
+            total = len(lows) - 1
+            hl_score = max(hl_count, ll_count) / total if total > 0 else 0.0
+        
+        return float((hh_score + hl_score) / 2)
+
     def classify_structure(self, trend: float, compression: float, 
-                          pivots: List[PivotPoint], line: np.ndarray) -> StructureType:
+                          pivots: List[PivotPoint], line: np.ndarray) -> Tuple[StructureType, float]:
         candidates = []
         
         is_impulse, impulse_dir, impulse_conf = self._detect_impulse(line)
@@ -831,10 +1133,17 @@ class StructureExtractor:
             candidates.append((StructureType.ACCUMULATION, 0.35))
         
         if not candidates:
-            return StructureType.UNKNOWN
+            return StructureType.UNKNOWN, 0.0
         
         candidates.sort(key=lambda x: x[1], reverse=True)
-        return candidates[0][0]
+        best_type, best_conf = candidates[0]
+        
+        if len(candidates) > 1:
+            second_conf = candidates[1][1]
+            if best_conf - second_conf < 0.1:
+                best_conf *= 0.85
+        
+        return best_type, float(best_conf)
     
     def create_feature_vector(self, normalized_line: np.ndarray, 
                              pivot_sequence: List[float],
@@ -882,7 +1191,15 @@ class StructureExtractor:
         trend = self.calculate_trend(normalized_line)
         volatility = self.calculate_volatility(normalized_line)
         compression = self.calculate_compression(normalized_line, pivots)
-        structure_type = self.classify_structure(trend, compression, pivots, normalized_line)
+        structure_type, pattern_conf = self.classify_structure(trend, compression, pivots, normalized_line)
+        
+        pivot_slopes = self.calculate_pivot_slopes(pivots, normalized_line)
+        pivot_angles = self.calculate_pivot_angles(pivots, normalized_line)
+        symmetry = self.calculate_symmetry(pivots, normalized_line)
+        convergence = self.calculate_convergence_rate(pivots, normalized_line)
+        breakout_str = self.calculate_breakout_strength(normalized_line)
+        trend_consist = self.calculate_trend_consistency(pivots, normalized_line)
+        avg_conf = float(np.mean([p.confidence for p in pivots])) if pivots else 0.0
         
         feature_vector = self.create_feature_vector(
             normalized_line, pivot_sequence, relative_distances,
@@ -899,7 +1216,15 @@ class StructureExtractor:
             compression_ratio=compression,
             structure_type=structure_type,
             feature_vector=feature_vector,
-            quality_score=quality
+            quality_score=quality,
+            pattern_confidence=pattern_conf,
+            pivot_slopes=pivot_slopes,
+            pivot_angles=pivot_angles,
+            symmetry_score=symmetry,
+            convergence_rate=convergence,
+            breakout_strength=breakout_str,
+            avg_pivot_confidence=avg_conf,
+            trend_consistency=trend_consist
         )
     
     def extract_from_candles(self, closes: List[float]) -> Optional[StructureFeatures]:
@@ -946,5 +1271,13 @@ class StructureExtractor:
             compression_ratio=compression_ratio,
             structure_type=structure_type,
             feature_vector=feature_vector,
-            quality_score=data.get("quality_score", 0.5)
+            quality_score=data.get("quality_score", 0.5),
+            pattern_confidence=data.get("pattern_confidence", 0.5),
+            pivot_slopes=data.get("pivot_slopes", []),
+            pivot_angles=data.get("pivot_angles", []),
+            symmetry_score=data.get("symmetry_score", 0.0),
+            convergence_rate=data.get("convergence_rate", 0.0),
+            breakout_strength=data.get("breakout_strength", 0.0),
+            avg_pivot_confidence=data.get("avg_pivot_confidence", 0.0),
+            trend_consistency=data.get("trend_consistency", 0.0)
         )
