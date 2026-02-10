@@ -76,6 +76,7 @@
                                     class="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500">
                                 <option value="structure">Структуры</option>
                                 <option value="candle">Свечные</option>
+                                <option value="fibonacci">Фибоначчи</option>
                             </select>
                         </div>
                     </div>
@@ -163,6 +164,46 @@
                                 <div class="font-medium">Нисходящий клин</div>
                                 <div class="text-xs text-gray-400">Сужение вниз (бычий)</div>
                             </button>
+                        </div>
+                    </div>
+
+                    <div id="fiboPatterns" class="hidden">
+                        <p class="text-xs text-gray-400 mb-3">Находит графики с касаниями уровней Фибоначчи</p>
+                        <div class="grid grid-cols-1 gap-2 mb-3">
+                            <button onclick="startFiboScan()" class="fibo-scan-btn bg-gradient-to-r from-amber-700 to-yellow-600 hover:from-amber-600 hover:to-yellow-500 p-4 rounded-lg text-sm text-left transition">
+                                <div class="font-medium text-base">Найти касания Фибо</div>
+                                <div class="text-xs text-amber-200 mt-1">Уровни 23.6%, 38.2%, 50%, 61.8%, 78.6%</div>
+                            </button>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <label class="text-xs text-gray-400">Мин. касаний</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="range" id="fiboMinTouches" min="1" max="8" value="3" 
+                                           class="w-20 h-1 bg-gray-600 rounded-lg cursor-pointer"
+                                           oninput="document.getElementById('fiboMinTouchesVal').textContent = this.value">
+                                    <span id="fiboMinTouchesVal" class="text-xs text-gray-300 w-4 text-right">3</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <label class="text-xs text-gray-400">Мин. качество</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="range" id="fiboMinQuality" min="10" max="80" value="30" step="5"
+                                           class="w-20 h-1 bg-gray-600 rounded-lg cursor-pointer"
+                                           oninput="document.getElementById('fiboMinQualityVal').textContent = this.value + '%'">
+                                    <span id="fiboMinQualityVal" class="text-xs text-gray-300 w-8 text-right">30%</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3 p-3 bg-gray-700/50 rounded-lg">
+                            <div class="text-xs text-gray-300 font-medium mb-2">Уровни Фибоначчи:</div>
+                            <div class="grid grid-cols-2 gap-1 text-xs text-gray-400">
+                                <div><span class="text-yellow-400">23.6%</span> — слабая коррекция</div>
+                                <div><span class="text-orange-400">38.2%</span> — умеренная</div>
+                                <div><span class="text-red-400">50.0%</span> — половинный откат</div>
+                                <div><span class="text-pink-400">61.8%</span> — золотое сечение</div>
+                                <div><span class="text-purple-400">78.6%</span> — глубокая коррекция</div>
+                            </div>
                         </div>
                     </div>
 
@@ -527,6 +568,23 @@
                 </div>
             </div>
             
+            <div id="modalFiboInfo" class="hidden mb-4">
+                <div class="bg-gradient-to-r from-amber-900/30 to-yellow-900/20 border border-amber-700/30 rounded-lg p-4">
+                    <div class="text-sm font-medium text-amber-400 mb-2">Уровни Фибоначчи</div>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                            <span class="text-gray-400">Свинг:</span>
+                            <span id="modalFiboSwing" class="ml-1 text-gray-200"></span>
+                        </div>
+                        <div>
+                            <span class="text-gray-400">Направление:</span>
+                            <span id="modalFiboDir" class="ml-1 text-gray-200"></span>
+                        </div>
+                    </div>
+                    <div id="modalFiboTouches" class="mt-3 grid grid-cols-5 gap-2"></div>
+                </div>
+            </div>
+            
             <div class="mb-4">
                 <p class="text-sm text-gray-400 mb-2">График найденного паттерна:</p>
                 <div class="h-64 bg-gray-700 rounded overflow-hidden">
@@ -747,6 +805,7 @@
             'dark_cloud': 'Тёмная завеса',
             'tweezer_top': 'Пинцет верх',
             'tweezer_bottom': 'Пинцет низ',
+            'fibonacci': 'Фибоначчи',
             'unknown': 'Неизвестно'
         };
 
@@ -898,6 +957,7 @@
                         <span class="px-2 py-1 text-xs rounded ${getTypeColor(match.structure_type)}">
                             ${structureTypeLabels[match.structure_type] || match.structure_type}
                         </span>
+                        ${match.fibo_data ? `<div class="text-xs text-amber-400 mt-1">${match.fibo_data.total_touches} кас. / ${match.fibo_data.best_level}</div>` : ''}
                     </td>
                     <td class="py-3 pr-4">
                         <span class="text-sm font-medium ${(match.price_change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}">
@@ -1209,6 +1269,25 @@
             ptEl.textContent = age.text;
             ptEl.className = `ml-2 font-medium ${age.color}`;
             
+            const fiboInfoEl = document.getElementById('modalFiboInfo');
+            if (match.fibo_data) {
+                fiboInfoEl.classList.remove('hidden');
+                const fd = match.fibo_data;
+                document.getElementById('modalFiboSwing').textContent = `${fd.swing_low.toFixed(4)} → ${fd.swing_high.toFixed(4)}`;
+                document.getElementById('modalFiboDir').textContent = fd.is_uptrend ? '↑ Восходящий' : '↓ Нисходящий';
+                const touchesEl = document.getElementById('modalFiboTouches');
+                const levelColors = {'23.6%': 'text-yellow-400', '38.2%': 'text-orange-400', '50%': 'text-red-400', '61.8%': 'text-pink-400', '78.6%': 'text-purple-400'};
+                touchesEl.innerHTML = Object.entries(fd.touch_summary || {}).map(([level, info]) => `
+                    <div class="bg-gray-700/60 rounded p-2 text-center">
+                        <div class="${levelColors[level] || 'text-gray-300'} font-medium text-xs">${level}</div>
+                        <div class="text-white text-sm font-bold">${info.count}</div>
+                        <div class="text-xs text-gray-400">${info.bounces ? info.bounces + ' отск.' : ''}</div>
+                    </div>
+                `).join('');
+            } else {
+                fiboInfoEl.classList.add('hidden');
+            }
+            
             const modal = document.getElementById('chartModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -1485,6 +1564,7 @@
                 'dark_cloud': 'bg-purple-600',
                 'tweezer_top': 'bg-orange-600',
                 'tweezer_bottom': 'bg-blue-600',
+                'fibonacci': 'bg-amber-600',
                 'unknown': 'bg-gray-600'
             };
             return colors[type] || 'bg-gray-600';
@@ -1828,11 +1908,15 @@
         function switchPatternMode(mode) {
             const structDiv = document.getElementById('structurePatterns');
             const candleDiv = document.getElementById('candlePatterns');
+            const fiboDiv = document.getElementById('fiboPatterns');
+            structDiv.classList.add('hidden');
+            candleDiv.classList.add('hidden');
+            fiboDiv.classList.add('hidden');
             if (mode === 'candle') {
-                structDiv.classList.add('hidden');
                 candleDiv.classList.remove('hidden');
+            } else if (mode === 'fibonacci') {
+                fiboDiv.classList.remove('hidden');
             } else {
-                candleDiv.classList.add('hidden');
                 structDiv.classList.remove('hidden');
             }
         }
@@ -1923,6 +2007,46 @@
             }
         }
         
+        async function startFiboScan() {
+            try {
+                matches = [];
+                matchIdCounter = 0;
+                renderMatches();
+
+                document.getElementById('structureInfo').classList.add('hidden');
+                const typeScanDiv = document.getElementById('typeScanInfo');
+                document.getElementById('typeScanName').textContent = 'Фибоначчи';
+                document.getElementById('typeScanDescription').textContent = 'Поиск графиков с касаниями уровней Фибоначчи (23.6%, 38.2%, 50%, 61.8%, 78.6%)';
+                typeScanDiv.classList.remove('hidden');
+
+                const tfFilter = document.getElementById('timeframeSelect').value || null;
+                const minTouches = parseInt(document.getElementById('fiboMinTouches').value) || 3;
+                const minQuality = parseFloat(document.getElementById('fiboMinQuality').value) || 30;
+
+                const response = await fetch('/api/start-scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mode: 'fibo_scan',
+                        timeframe_filter: tfFilter,
+                        fibo_min_touches: minTouches,
+                        fibo_min_quality: minQuality
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Ошибка');
+                }
+
+                await response.json();
+                updateStatus(true);
+            } catch (error) {
+                console.error('Ошибка fibo scan:', error);
+                alert('Ошибка: ' + error.message);
+            }
+        }
+
         function highlightActiveTypeBtn(structureType) {
             document.querySelectorAll('.type-scan-btn').forEach(btn => {
                 btn.classList.remove('ring-2', 'ring-blue-400');

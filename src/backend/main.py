@@ -16,6 +16,7 @@ from .similarity_matcher import SimilarityMatcher, MatchResult
 from .binance_scanner import BinanceScanner
 from .database import Database
 from .candle_patterns import CandlePatternDetector, CandlePatternType
+from .fibonacci_analyzer import FibonacciAnalyzer
 
 
 app = FastAPI(title="Chart Structure Scanner")
@@ -34,6 +35,7 @@ similarity_matcher = SimilarityMatcher()
 scanner = BinanceScanner(num_symbols=50)
 database = Database()
 candle_detector = CandlePatternDetector()
+fibo_analyzer = FibonacciAnalyzer()
 
 active_websockets: List[WebSocket] = []
 current_reference: Optional[StructureFeatures] = None
@@ -43,13 +45,16 @@ is_scanning: bool = False
 scan_task: Optional[asyncio.Task] = None
 _init_task: Optional[asyncio.Task] = None
 _pending_initial_scan: Optional[asyncio.Task] = None
-search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", or "candle_scan"
+search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", "candle_scan", or "fibo_scan"
 search_pattern_type: Optional[str] = None
 search_type_filter: Optional[str] = None
 search_candle_filter: Optional[str] = None
 search_timeframe_filter: Optional[str] = None
+search_fibo_min_touches: int = 3
+search_fibo_min_quality: float = 30.0
 type_scan_seen: set = set()
 candle_scan_seen: set = set()
+fibo_scan_seen: set = set()
 
 
 class ThresholdUpdate(BaseModel):
@@ -67,12 +72,14 @@ class PresetRequest(BaseModel):
 
 
 class StartScanRequest(BaseModel):
-    mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", or "candle_scan"
+    mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", "candle_scan", or "fibo_scan"
     pattern_type: Optional[str] = None
     structure_id: Optional[int] = None
     type_filter: Optional[str] = None
     candle_filter: Optional[str] = None
     timeframe_filter: Optional[str] = None
+    fibo_min_touches: int = 3
+    fibo_min_quality: float = 30.0
 
 
 class ManualPivot(BaseModel):
@@ -119,6 +126,10 @@ async def on_market_update(symbol: str, timeframe: str):
     
     if search_mode == "candle_scan":
         await on_market_update_candle_scan(symbol, timeframe)
+        return
+    
+    if search_mode == "fibo_scan":
+        await on_market_update_fibo_scan(symbol, timeframe)
         return
     
     if current_reference is None:
@@ -297,6 +308,118 @@ async def run_initial_candle_scan():
     })
 
 
+def _fibo_result_to_match_data(result, symbol, timeframe):
+    """Convert FiboResult to match data dict for broadcasting."""
+    from .fibonacci_analyzer import FIBO_NAMES, FiboLevel
+    touch_summary = {}
+    for t in result.touches:
+        if isinstance(t.level, FiboLevel):
+            name = FIBO_NAMES.get(t.level, str(t.level))
+        else:
+            name = str(t.level)
+        if name not in touch_summary:
+            touch_summary[name] = {"count": 0, "bounces": 0}
+        touch_summary[name]["count"] += 1
+        if t.is_bounce:
+            touch_summary[name]["bounces"] += 1
+
+    return {
+        "match_id": None,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "similarity_score": result.quality_score,
+        "structure_type": "fibonacci",
+        "timestamp": datetime.now().isoformat(),
+        "is_mirrored": False,
+        "normalized_line": result.normalized_line,
+        "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+        "pattern_time": None,
+        "fibo_data": {
+            "swing_high": result.swing_high,
+            "swing_low": result.swing_low,
+            "is_uptrend": result.is_uptrend,
+            "levels": result.levels,
+            "total_touches": result.total_touches,
+            "unique_levels": result.unique_levels_touched,
+            "best_level": result.best_level,
+            "best_level_touches": result.best_level_touches,
+            "touch_summary": touch_summary
+        }
+    }
+
+
+async def on_market_update_fibo_scan(symbol: str, timeframe: str):
+    """Callback for Fibonacci level scanning."""
+    global fibo_scan_seen, search_timeframe_filter, search_fibo_min_touches, search_fibo_min_quality
+
+    if search_timeframe_filter and timeframe != search_timeframe_filter:
+        return
+
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles or len(candles) < 30:
+        return
+
+    key = f"{symbol}_{timeframe}"
+    if key in fibo_scan_seen:
+        return
+
+    closes = [c.close for c in candles]
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+
+    results = fibo_analyzer.analyze(
+        symbol, timeframe, closes, highs, lows,
+        min_touches=search_fibo_min_touches,
+        min_quality=search_fibo_min_quality
+    )
+
+    if results:
+        fibo_scan_seen.add(key)
+        for result in results:
+            match_data = _fibo_result_to_match_data(result, symbol, timeframe)
+            await broadcast_message({"type": "match", "data": match_data})
+
+
+async def run_initial_fibo_scan():
+    """Run initial Fibonacci scan across all symbols/timeframes."""
+    global fibo_scan_seen, search_fibo_min_touches, search_fibo_min_quality
+
+    match_count = 0
+
+    for symbol, sym_data in scanner.symbol_data.items():
+        for timeframe, candles in sym_data.candles.items():
+            if search_timeframe_filter and timeframe != search_timeframe_filter:
+                continue
+            if not candles or len(candles) < 30:
+                continue
+
+            key = f"{symbol}_{timeframe}"
+            if key in fibo_scan_seen:
+                continue
+
+            closes = [c.close for c in candles]
+            highs = [c.high for c in candles]
+            lows = [c.low for c in candles]
+
+            results = fibo_analyzer.analyze(
+                symbol, timeframe, closes, highs, lows,
+                min_touches=search_fibo_min_touches,
+                min_quality=search_fibo_min_quality
+            )
+
+            if results:
+                fibo_scan_seen.add(key)
+                for result in results:
+                    match_count += 1
+                    match_data = _fibo_result_to_match_data(result, symbol, timeframe)
+                    await broadcast_message({"type": "match", "data": match_data})
+
+    await broadcast_message({
+        "type": "initial_scan_complete",
+        "data": {"total_matches": match_count}
+    })
+
+
 async def ensure_scanner_initialized():
     """Initialize scanner once, reuse for all subsequent scans."""
     if scanner.initialized:
@@ -336,6 +459,10 @@ async def run_initial_scan():
     
     if search_mode == "candle_scan":
         await run_initial_candle_scan()
+        return
+    
+    if search_mode == "fibo_scan":
+        await run_initial_fibo_scan()
         return
     
     if current_reference is None:
@@ -652,7 +779,7 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, _init_task, _pending_initial_scan, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter
+    global is_scanning, scan_task, _init_task, _pending_initial_scan, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter, fibo_scan_seen, search_fibo_min_touches, search_fibo_min_quality
     
     if data is None:
         data = StartScanRequest()
@@ -662,8 +789,11 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     search_type_filter = data.type_filter
     search_candle_filter = data.candle_filter
     search_timeframe_filter = data.timeframe_filter if data.timeframe_filter != "all" else None
+    search_fibo_min_touches = data.fibo_min_touches
+    search_fibo_min_quality = data.fibo_min_quality
     type_scan_seen = set()
     candle_scan_seen = set()
+    fibo_scan_seen = set()
     
     if data.mode == "candle_scan":
         if data.candle_filter is None:
@@ -702,11 +832,15 @@ async def start_scan(data: Optional[StartScanRequest] = None):
             features_dict = json.loads(structure["features"]) if isinstance(structure["features"], str) else structure["features"]
             current_reference = structure_extractor.features_from_dict(features_dict)
             current_structure_id = data.structure_id
+    elif data.mode == "fibo_scan":
+        current_reference = None
+        current_structure_id = None
+
     elif data.mode == "manual":
         if current_reference is None:
             raise HTTPException(status_code=400, detail="No manual structure created. Create one first.")
     else:
-        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', 'manual', 'type_scan', or 'candle_scan'")
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', 'manual', 'type_scan', 'candle_scan', or 'fibo_scan'")
     
     if is_scanning:
         if scan_task:
