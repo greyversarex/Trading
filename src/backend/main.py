@@ -236,6 +236,7 @@ async def on_market_update_candle_scan(symbol: str, timeframe: str):
             normalized = [(v - mn) / rng for v in closes]
             
             pattern_time = candles[-1].close_time
+            pattern_candle_index = len(candles) - 1
             
             await broadcast_message({
                 "type": "match",
@@ -249,7 +250,9 @@ async def on_market_update_candle_scan(symbol: str, timeframe: str):
                     "is_mirrored": False,
                     "normalized_line": normalized,
                     "price_change_24h": scanner.price_change_24h.get(symbol, 0),
-                    "pattern_time": pattern_time
+                    "pattern_time": pattern_time,
+                    "candle_pattern_index": pattern_candle_index,
+                    "is_candle_pattern": True
                 }
             })
 
@@ -285,6 +288,7 @@ async def run_initial_candle_scan():
                     normalized = [(v - mn) / rng for v in closes]
                     
                     pattern_time = candles[-1].close_time
+                    pattern_candle_index = len(candles) - 1
                     
                     await broadcast_message({
                         "type": "match",
@@ -298,7 +302,9 @@ async def run_initial_candle_scan():
                             "is_mirrored": False,
                             "normalized_line": normalized,
                             "price_change_24h": scanner.price_change_24h.get(symbol, 0),
-                            "pattern_time": pattern_time
+                            "pattern_time": pattern_time,
+                            "candle_pattern_index": pattern_candle_index,
+                            "is_candle_pattern": True
                         }
                     })
     
@@ -1084,6 +1090,26 @@ async def get_chart_data(symbol: str, timeframe: str):
     """Get chart data for a symbol/timeframe."""
     data = scanner.get_symbol_chart_data(symbol, timeframe)
     return {"data": data}
+
+
+@app.get("/api/candles/{symbol}/{timeframe}")
+async def get_candles_data(symbol: str, timeframe: str):
+    """Get OHLC candle data for lightweight-charts rendering."""
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles:
+        return {"candles": []}
+    
+    ohlc = []
+    for c in candles:
+        ohlc.append({
+            "time": c.open_time // 1000,
+            "open": c.open,
+            "high": c.high,
+            "low": c.low,
+            "close": c.close,
+            "volume": c.volume
+        })
+    return {"candles": ohlc}
 
 
 @app.websocket("/ws")

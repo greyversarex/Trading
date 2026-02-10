@@ -6,6 +6,7 @@
     <title>Сканер Структур Графиков</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         .dropzone {
             border: 2px dashed #4a5568;
@@ -968,11 +969,19 @@
                         <canvas id="sparkline-${index}" class="sparkline"></canvas>
                     </td>
                     <td class="py-3 pr-2">
-                        <div onclick="event.stopPropagation()">
+                        <div onclick="event.stopPropagation()" class="flex gap-1">
+                            ${match.is_candle_pattern ? `
+                            <button onclick="openCandleChart('${match.symbol}', '${match.timeframe}', '${match.structure_type}', ${match.candle_pattern_index || -1})" 
+                                    class="p-1.5 hover:bg-amber-600/20 rounded text-amber-400 hover:text-amber-300 transition" title="График с маркером паттерна">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
+                                </svg>
+                            </button>
+                            ` : ''}
                             <button onclick="openTradingViewChart('${match.symbol}', '${match.timeframe}')" 
                                     class="p-1.5 hover:bg-blue-600/20 rounded text-blue-400 hover:text-blue-300 transition" title="Открыть график TradingView">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
                                 </svg>
                             </button>
                         </div>
@@ -1141,7 +1150,13 @@
         function openGridFullscreen(symbol) {
             const interval = gridSelectedTf[symbol] || '60';
             const tfMap = {'1':'1m','3':'3m','5':'5m','15':'15m','30':'30m','60':'1h','240':'4h','D':'1d','W':'1w'};
-            openTradingViewChart(symbol, tfMap[interval] || '1h');
+            const tf = tfMap[interval] || '1h';
+            const match = matches.find(m => m.symbol === symbol);
+            if (match && match.is_candle_pattern) {
+                openCandleChart(symbol, tf, match.structure_type, match.candle_pattern_index || -1);
+            } else {
+                openTradingViewChart(symbol, tf);
+            }
         }
 
         function createMiniWidget(containerId, tvSymbol, interval, key) {
@@ -2488,7 +2503,117 @@
         function openTvFromModal() {
             if (!currentModalMatch) return;
             closeModal();
-            openTradingViewChart(currentModalMatch.symbol, currentModalMatch.timeframe);
+            if (currentModalMatch.is_candle_pattern) {
+                openCandleChart(currentModalMatch.symbol, currentModalMatch.timeframe, currentModalMatch.structure_type, currentModalMatch.candle_pattern_index || -1);
+            } else {
+                openTradingViewChart(currentModalMatch.symbol, currentModalMatch.timeframe);
+            }
+        }
+
+        let lwChart = null;
+
+        async function openCandleChart(symbol, timeframe, patternType, patternIndex) {
+            const container = document.getElementById('tvChartContainer');
+            if (container._resizeObserver) {
+                container._resizeObserver.disconnect();
+                container._resizeObserver = null;
+            }
+            if (lwChart) {
+                lwChart.remove();
+                lwChart = null;
+            }
+            container.innerHTML = '';
+
+            document.getElementById('tvChartTitle').textContent = symbol;
+            document.getElementById('tvChartTimeframe').textContent = timeframe;
+            const tvSymbol = getGridTvSymbol(symbol);
+            document.getElementById('tvChartLink').href = `https://www.tradingview.com/chart/?symbol=${tvSymbol}`;
+
+            const modal = document.getElementById('tvChartModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+
+            try {
+                const resp = await fetch(`/api/candles/${symbol}/${timeframe}`);
+                const data = await resp.json();
+                const candles = data.candles || [];
+
+                if (candles.length === 0) {
+                    container.innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">Нет данных свечей</div>';
+                    return;
+                }
+
+                if (lwChart) {
+                    lwChart.remove();
+                    lwChart = null;
+                }
+
+                lwChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth,
+                    height: container.clientHeight,
+                    layout: {
+                        background: { color: '#111827' },
+                        textColor: '#9CA3AF',
+                    },
+                    grid: {
+                        vertLines: { color: '#1F2937' },
+                        horzLines: { color: '#1F2937' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    },
+                    timeScale: {
+                        borderColor: '#374151',
+                        timeVisible: true,
+                    },
+                    rightPriceScale: {
+                        borderColor: '#374151',
+                    },
+                });
+
+                const candleSeries = lwChart.addCandlestickSeries({
+                    upColor: '#22C55E',
+                    downColor: '#EF4444',
+                    borderDownColor: '#EF4444',
+                    borderUpColor: '#22C55E',
+                    wickDownColor: '#EF4444',
+                    wickUpColor: '#22C55E',
+                });
+
+                candleSeries.setData(candles);
+
+                const patternLabel = structureTypeLabels[patternType] || patternType;
+                const markerIdx = patternIndex >= 0 && patternIndex < candles.length ? patternIndex : candles.length - 1;
+                const markerCandle = candles[markerIdx];
+                const isBullish = markerCandle.close >= markerCandle.open;
+
+                const markers = [{
+                    time: markerCandle.time,
+                    position: isBullish ? 'belowBar' : 'aboveBar',
+                    color: '#FBBF24',
+                    shape: isBullish ? 'arrowUp' : 'arrowDown',
+                    text: patternLabel,
+                }];
+
+                candleSeries.setMarkers(markers);
+
+                lwChart.timeScale().scrollToPosition(-3, false);
+
+                const resizeObserver = new ResizeObserver(() => {
+                    if (lwChart) {
+                        lwChart.applyOptions({
+                            width: container.clientWidth,
+                            height: container.clientHeight,
+                        });
+                    }
+                });
+                resizeObserver.observe(container);
+                container._resizeObserver = resizeObserver;
+
+            } catch (err) {
+                console.error('Ошибка загрузки свечей:', err);
+                container.innerHTML = '<div class="flex items-center justify-center h-full text-red-400">Ошибка загрузки данных</div>';
+            }
         }
 
         function closeTvChart(event) {
@@ -2496,7 +2621,16 @@
             const modal = document.getElementById('tvChartModal');
             modal.classList.add('hidden');
             modal.classList.remove('flex');
-            document.getElementById('tvChartContainer').innerHTML = '';
+            const container = document.getElementById('tvChartContainer');
+            if (container._resizeObserver) {
+                container._resizeObserver.disconnect();
+                container._resizeObserver = null;
+            }
+            if (lwChart) {
+                lwChart.remove();
+                lwChart = null;
+            }
+            container.innerHTML = '';
         }
 
         document.addEventListener('DOMContentLoaded', () => {
