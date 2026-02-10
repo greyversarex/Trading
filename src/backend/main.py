@@ -1260,6 +1260,51 @@ async def get_candles_data(symbol: str, timeframe: str):
     return {"candles": ohlc}
 
 
+@app.get("/api/debug-structure/{symbol}/{timeframe}")
+async def get_debug_structure(symbol: str, timeframe: str):
+    """Get candles + pivot points + structure info for debug visualization."""
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles:
+        return {"candles": [], "pivots": [], "structure_type": "unknown"}
+
+    ohlc = []
+    for c in candles:
+        ohlc.append({
+            "time": c.open_time // 1000,
+            "open": c.open,
+            "high": c.high,
+            "low": c.low,
+            "close": c.close,
+        })
+
+    pivots = []
+    structure_type = "unknown"
+    pattern_confidence = 0.0
+
+    sym_data = scanner.symbol_data.get(symbol)
+    if sym_data:
+        features = sym_data.structures.get(timeframe)
+        if features is not None:
+            structure_type = features.structure_type.value
+            pattern_confidence = round(features.pattern_confidence * 100, 1)
+            for p in features.pivot_points:
+                if 0 <= p.index < len(ohlc):
+                    pivots.append({
+                        "index": p.index,
+                        "time": ohlc[p.index]["time"],
+                        "value": p.value,
+                        "is_high": p.is_high,
+                        "confidence": round(p.confidence, 3),
+                    })
+
+    return {
+        "candles": ohlc,
+        "pivots": pivots,
+        "structure_type": structure_type,
+        "pattern_confidence": pattern_confidence,
+    }
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates."""
