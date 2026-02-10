@@ -78,6 +78,7 @@
                                 <option value="structure">Структуры</option>
                                 <option value="candle">Свечные</option>
                                 <option value="fibonacci">Фибоначчи</option>
+                                <option value="levels">Уровни</option>
                             </select>
                         </div>
                     </div>
@@ -204,6 +205,35 @@
                                 <div><span class="text-red-400">50.0%</span> — половинный откат</div>
                                 <div><span class="text-pink-400">61.8%</span> — золотое сечение</div>
                                 <div><span class="text-purple-400">78.6%</span> — глубокая коррекция</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="levelPatterns" class="hidden">
+                        <p class="text-xs text-gray-400 mb-3">Находит чёткие уровни поддержки и сопротивления (горизонтальные и наклонные)</p>
+                        <div class="grid grid-cols-1 gap-2 mb-3">
+                            <button onclick="startLevelScan()" class="level-scan-btn bg-gradient-to-r from-cyan-700 to-blue-600 hover:from-cyan-600 hover:to-blue-500 p-4 rounded-lg text-sm text-left transition">
+                                <div class="font-medium text-base">Найти уровни</div>
+                                <div class="text-xs text-cyan-200 mt-1">Линии поддержки и сопротивления с макс. касаниями</div>
+                            </button>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <label class="text-xs text-gray-400">Мин. касаний</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="range" id="levelMinTouches" min="2" max="8" value="3" 
+                                           class="w-20 h-1 bg-gray-600 rounded-lg cursor-pointer"
+                                           oninput="document.getElementById('levelMinTouchesVal').textContent = this.value">
+                                    <span id="levelMinTouchesVal" class="text-xs text-gray-300 w-4 text-right">3</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3 p-3 bg-gray-700/50 rounded-lg">
+                            <div class="text-xs text-gray-300 font-medium mb-2">Что ищем:</div>
+                            <div class="grid grid-cols-1 gap-1 text-xs text-gray-400">
+                                <div><span class="text-green-400">Поддержка</span> — линия через минимумы, от которой цена отскакивает вверх</div>
+                                <div><span class="text-red-400">Сопротивление</span> — линия через максимумы, от которой цена отскакивает вниз</div>
+                                <div><span class="text-cyan-400">Любой наклон</span> — горизонтальные и наклонные трендовые линии</div>
                             </div>
                         </div>
                     </div>
@@ -479,6 +509,9 @@
                                 <option value="marubozu_bear">Марубозу ↓</option>
                                 <option value="tweezer_top">Пинцет верх</option>
                                 <option value="tweezer_bottom">Пинцет низ</option>
+                                <option disabled>── Уровни ──</option>
+                                <option value="level_support">Поддержка</option>
+                                <option value="level_resistance">Сопротивление</option>
                             </select>
                             <select id="sortBy" class="bg-gray-700 text-sm rounded px-2 py-1 text-gray-300">
                                 <option value="similarity">По схожести</option>
@@ -807,6 +840,8 @@
             'tweezer_top': 'Пинцет верх',
             'tweezer_bottom': 'Пинцет низ',
             'fibonacci': 'Фибоначчи',
+            'level_support': 'Поддержка',
+            'level_resistance': 'Сопротивление',
             'unknown': 'Неизвестно'
         };
 
@@ -959,6 +994,7 @@
                             ${structureTypeLabels[match.structure_type] || match.structure_type}
                         </span>
                         ${match.fibo_data ? `<div class="text-xs text-amber-400 mt-1">${match.fibo_data.total_touches} кас. / ${match.fibo_data.best_level}</div>` : ''}
+                        ${match.level_data ? `<div class="text-xs text-cyan-400 mt-1">${match.level_data.touch_count} кас. / ${match.level_data.slope_label}</div>` : ''}
                     </td>
                     <td class="py-3 pr-4">
                         <span class="text-sm font-medium ${(match.price_change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}">
@@ -973,6 +1009,13 @@
                             ${match.is_candle_pattern ? `
                             <button onclick="openCandleChart('${match.symbol}', '${match.timeframe}', '${match.structure_type}', ${match.candle_pattern_index || -1})" 
                                     class="p-1.5 hover:bg-amber-600/20 rounded text-amber-400 hover:text-amber-300 transition" title="График с маркером паттерна">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
+                                </svg>
+                            </button>
+                            ` : match.is_level ? `
+                            <button onclick="openLevelChart('${match.symbol}', '${match.timeframe}', ${match.local_id})" 
+                                    class="p-1.5 hover:bg-cyan-600/20 rounded text-cyan-400 hover:text-cyan-300 transition" title="График с уровнем">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
                                 </svg>
@@ -1161,6 +1204,8 @@
             const match = matches.find(m => m.symbol === symbol);
             if (match && match.is_candle_pattern) {
                 openCandleChart(symbol, tf, match.structure_type, match.candle_pattern_index || -1);
+            } else if (match && match.is_level) {
+                openLevelChart(symbol, tf, match.local_id);
             } else {
                 openTradingViewChart(symbol, tf);
             }
@@ -1587,6 +1632,8 @@
                 'tweezer_top': 'bg-orange-600',
                 'tweezer_bottom': 'bg-blue-600',
                 'fibonacci': 'bg-amber-600',
+                'level_support': 'bg-green-600',
+                'level_resistance': 'bg-red-600',
                 'unknown': 'bg-gray-600'
             };
             return colors[type] || 'bg-gray-600';
@@ -1931,13 +1978,17 @@
             const structDiv = document.getElementById('structurePatterns');
             const candleDiv = document.getElementById('candlePatterns');
             const fiboDiv = document.getElementById('fiboPatterns');
+            const levelDiv = document.getElementById('levelPatterns');
             structDiv.classList.add('hidden');
             candleDiv.classList.add('hidden');
             fiboDiv.classList.add('hidden');
+            levelDiv.classList.add('hidden');
             if (mode === 'candle') {
                 candleDiv.classList.remove('hidden');
             } else if (mode === 'fibonacci') {
                 fiboDiv.classList.remove('hidden');
+            } else if (mode === 'levels') {
+                levelDiv.classList.remove('hidden');
             } else {
                 structDiv.classList.remove('hidden');
             }
@@ -2071,6 +2122,44 @@
                 updateStatus(true);
             } catch (error) {
                 console.error('Ошибка fibo scan:', error);
+                alert('Ошибка: ' + error.message);
+            }
+        }
+
+        async function startLevelScan() {
+            try {
+                matches = [];
+                matchIdCounter = 0;
+                renderMatches();
+
+                document.getElementById('structureInfo').classList.add('hidden');
+                const typeScanDiv = document.getElementById('typeScanInfo');
+                document.getElementById('typeScanName').textContent = 'Уровни';
+                document.getElementById('typeScanDescription').textContent = 'Поиск чётких линий поддержки и сопротивления с максимальным количеством касаний';
+                typeScanDiv.classList.remove('hidden');
+
+                const tfFilter = document.getElementById('timeframeSelect').value || null;
+                const minTouches = parseInt(document.getElementById('levelMinTouches').value) || 3;
+
+                const response = await fetch('/api/start-scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mode: 'level_scan',
+                        timeframe_filter: tfFilter,
+                        level_min_touches: minTouches
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Ошибка');
+                }
+
+                await response.json();
+                updateStatus(true);
+            } catch (error) {
+                console.error('Ошибка level scan:', error);
                 alert('Ошибка: ' + error.message);
             }
         }
@@ -2512,6 +2601,8 @@
             closeModal();
             if (currentModalMatch.is_candle_pattern) {
                 openCandleChart(currentModalMatch.symbol, currentModalMatch.timeframe, currentModalMatch.structure_type, currentModalMatch.candle_pattern_index || -1);
+            } else if (currentModalMatch.is_level) {
+                openLevelChart(currentModalMatch.symbol, currentModalMatch.timeframe, currentModalMatch.local_id);
             } else {
                 openTradingViewChart(currentModalMatch.symbol, currentModalMatch.timeframe);
             }
@@ -2619,6 +2710,142 @@
 
             } catch (err) {
                 console.error('Ошибка загрузки свечей:', err);
+                container.innerHTML = '<div class="flex items-center justify-center h-full text-red-400">Ошибка загрузки данных</div>';
+            }
+        }
+
+        async function openLevelChart(symbol, timeframe, localId) {
+            const match = matches.find(m => m.local_id === localId);
+            if (!match || !match.level_data) return;
+
+            const container = document.getElementById('tvChartContainer');
+            if (container._resizeObserver) {
+                container._resizeObserver.disconnect();
+                container._resizeObserver = null;
+            }
+            if (lwChart) {
+                lwChart.remove();
+                lwChart = null;
+            }
+            container.innerHTML = '';
+
+            const levelData = match.level_data;
+            const typeLabel = levelData.line_type === 'support' ? 'Поддержка' : 'Сопротивление';
+            document.getElementById('tvChartTitle').textContent = `${symbol} — ${typeLabel}`;
+            document.getElementById('tvChartTimeframe').textContent = timeframe;
+            const tvSymbol = getGridTvSymbol(symbol);
+            document.getElementById('tvChartLink').href = `https://www.tradingview.com/chart/?symbol=${tvSymbol}`;
+
+            const modal = document.getElementById('tvChartModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+
+            try {
+                const resp = await fetch(`/api/candles/${symbol}/${timeframe}`);
+                const data = await resp.json();
+                const candles = data.candles || [];
+
+                if (candles.length === 0) {
+                    container.innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">Нет данных свечей</div>';
+                    return;
+                }
+
+                lwChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth,
+                    height: container.clientHeight,
+                    layout: {
+                        background: { color: '#111827' },
+                        textColor: '#9CA3AF',
+                    },
+                    grid: {
+                        vertLines: { color: '#1F2937' },
+                        horzLines: { color: '#1F2937' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    },
+                    timeScale: {
+                        borderColor: '#374151',
+                        timeVisible: true,
+                    },
+                    rightPriceScale: {
+                        borderColor: '#374151',
+                    },
+                });
+
+                const candleSeries = lwChart.addCandlestickSeries({
+                    upColor: '#22C55E',
+                    downColor: '#EF4444',
+                    borderDownColor: '#EF4444',
+                    borderUpColor: '#22C55E',
+                    wickDownColor: '#EF4444',
+                    wickUpColor: '#22C55E',
+                });
+                candleSeries.setData(candles);
+
+                const lineColor = levelData.line_type === 'support' ? '#22C55E' : '#EF4444';
+                const lineData = [];
+                const lp = levelData.line_points;
+                if (lp && lp.length >= 2) {
+                    const startIdx = lp[0].index;
+                    const endIdx = Math.min(lp[1].index, candles.length - 1);
+                    for (let i = startIdx; i <= endIdx && i < candles.length; i++) {
+                        const price = levelData.slope * i + levelData.intercept;
+                        lineData.push({ time: candles[i].time, value: price });
+                    }
+                    if (endIdx < candles.length - 1) {
+                        for (let i = endIdx + 1; i < candles.length; i++) {
+                            const price = levelData.slope * i + levelData.intercept;
+                            lineData.push({ time: candles[i].time, value: price });
+                        }
+                    }
+                }
+
+                if (lineData.length >= 2) {
+                    const lineSeries = lwChart.addLineSeries({
+                        color: lineColor,
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        crosshairMarkerVisible: false,
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                    });
+                    lineSeries.setData(lineData);
+                }
+
+                const touchMarkers = [];
+                if (levelData.touches) {
+                    for (const t of levelData.touches) {
+                        if (t.candle_index >= 0 && t.candle_index < candles.length) {
+                            touchMarkers.push({
+                                time: candles[t.candle_index].time,
+                                position: t.is_high ? 'aboveBar' : 'belowBar',
+                                color: lineColor,
+                                shape: 'circle',
+                                text: '',
+                            });
+                        }
+                    }
+                }
+                if (touchMarkers.length > 0) {
+                    candleSeries.setMarkers(touchMarkers);
+                }
+
+                lwChart.timeScale().fitContent();
+
+                const resizeObserver = new ResizeObserver(() => {
+                    if (lwChart) {
+                        lwChart.applyOptions({
+                            width: container.clientWidth,
+                            height: container.clientHeight,
+                        });
+                    }
+                });
+                resizeObserver.observe(container);
+                container._resizeObserver = resizeObserver;
+
+            } catch (err) {
+                console.error('Ошибка загрузки свечей для уровня:', err);
                 container.innerHTML = '<div class="flex items-center justify-center h-full text-red-400">Ошибка загрузки данных</div>';
             }
         }

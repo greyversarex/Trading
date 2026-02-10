@@ -17,6 +17,7 @@ from .binance_scanner import BinanceScanner
 from .database import Database
 from .candle_patterns import CandlePatternDetector, CandlePatternType
 from .fibonacci_analyzer import FibonacciAnalyzer
+from .level_detector import LevelDetector
 
 
 app = FastAPI(title="Chart Structure Scanner")
@@ -36,6 +37,7 @@ scanner = BinanceScanner(num_symbols=50)
 database = Database()
 candle_detector = CandlePatternDetector()
 fibo_analyzer = FibonacciAnalyzer()
+level_detector = LevelDetector()
 
 active_websockets: List[WebSocket] = []
 current_reference: Optional[StructureFeatures] = None
@@ -55,6 +57,8 @@ search_fibo_min_quality: float = 30.0
 type_scan_seen: set = set()
 candle_scan_seen: set = set()
 fibo_scan_seen: set = set()
+level_scan_seen: set = set()
+search_level_min_touches: int = 3
 
 
 class ThresholdUpdate(BaseModel):
@@ -72,7 +76,7 @@ class PresetRequest(BaseModel):
 
 
 class StartScanRequest(BaseModel):
-    mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", "candle_scan", or "fibo_scan"
+    mode: str = "preset"
     pattern_type: Optional[str] = None
     structure_id: Optional[int] = None
     type_filter: Optional[str] = None
@@ -80,6 +84,7 @@ class StartScanRequest(BaseModel):
     timeframe_filter: Optional[str] = None
     fibo_min_touches: int = 3
     fibo_min_quality: float = 30.0
+    level_min_touches: int = 3
 
 
 class ManualPivot(BaseModel):
@@ -130,6 +135,10 @@ async def on_market_update(symbol: str, timeframe: str):
     
     if search_mode == "fibo_scan":
         await on_market_update_fibo_scan(symbol, timeframe)
+        return
+    
+    if search_mode == "level_scan":
+        await on_market_update_level_scan(symbol, timeframe)
         return
     
     if current_reference is None:
@@ -426,6 +435,135 @@ async def run_initial_fibo_scan():
     })
 
 
+async def on_market_update_level_scan(symbol: str, timeframe: str):
+    global level_scan_seen, search_level_min_touches
+
+    key = f"{symbol}_{timeframe}"
+    if key in level_scan_seen:
+        return
+
+    sym_data = scanner.symbol_data.get(symbol)
+    if not sym_data:
+        return
+    candles = sym_data.candles.get(timeframe, [])
+    if not candles or len(candles) < 30:
+        return
+
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+    closes = [c.close for c in candles]
+
+    levels = level_detector.detect_levels(
+        symbol, timeframe, highs, lows, closes,
+        min_touches=search_level_min_touches,
+        max_levels=5,
+    )
+
+    if levels:
+        level_scan_seen.add(key)
+        for lv in levels:
+            match_data = _level_to_match_data(lv, symbol, timeframe, candles)
+            await broadcast_message({"type": "match", "data": match_data})
+
+
+async def run_initial_level_scan():
+    global level_scan_seen, search_level_min_touches
+
+    match_count = 0
+
+    for symbol, sym_data in scanner.symbol_data.items():
+        for timeframe, candles_list in sym_data.candles.items():
+            if search_timeframe_filter and timeframe != search_timeframe_filter:
+                continue
+            if not candles_list or len(candles_list) < 30:
+                continue
+
+            key = f"{symbol}_{timeframe}"
+            if key in level_scan_seen:
+                continue
+
+            highs = [c.high for c in candles_list]
+            lows = [c.low for c in candles_list]
+            closes = [c.close for c in candles_list]
+
+            levels = level_detector.detect_levels(
+                symbol, timeframe, highs, lows, closes,
+                min_touches=search_level_min_touches,
+                max_levels=5,
+            )
+
+            if levels:
+                level_scan_seen.add(key)
+                for lv in levels:
+                    match_count += 1
+                    match_data = _level_to_match_data(lv, symbol, timeframe, candles_list)
+                    await broadcast_message({"type": "match", "data": match_data})
+
+    await broadcast_message({
+        "type": "initial_scan_complete",
+        "data": {"total_matches": match_count}
+    })
+
+
+def _level_to_match_data(lv, symbol, timeframe, candles):
+    n = len(candles)
+    closes = [c.close for c in candles]
+    min_c, max_c = min(closes), max(closes)
+    rng = max_c - min_c if max_c > min_c else 1.0
+    normalized_line = [(c - min_c) / rng for c in closes]
+
+    touch_points = []
+    for t in lv.touches:
+        touch_points.append({
+            "candle_index": t.candle_index,
+            "price": t.price,
+            "deviation": round(t.deviation, 8),
+            "is_high": t.is_high,
+        })
+
+    candle_time = None
+    if candles:
+        candle_time = candles[-1].open_time
+
+    line_points = []
+    start_idx = lv.anchor_start[0]
+    end_idx = min(lv.anchor_end[0], n - 1)
+    for idx in [start_idx, end_idx]:
+        price_at = lv.slope * idx + lv.intercept
+        line_points.append({"index": idx, "price": round(price_at, 8)})
+
+    slope_label = "горизонтальный"
+    if abs(lv.slope) > 0.0001:
+        slope_label = "восходящий" if lv.slope > 0 else "нисходящий"
+
+    return {
+        "match_id": None,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "similarity_score": lv.quality_score,
+        "structure_type": f"level_{lv.line_type}",
+        "timestamp": datetime.now().isoformat(),
+        "is_mirrored": False,
+        "normalized_line": normalized_line,
+        "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+        "pattern_time": candle_time,
+        "is_level": True,
+        "level_data": {
+            "line_type": lv.line_type,
+            "slope": round(lv.slope, 10),
+            "intercept": round(lv.intercept, 8),
+            "touch_count": lv.touch_count,
+            "avg_deviation_pct": lv.avg_deviation_pct,
+            "quality_score": lv.quality_score,
+            "coverage": lv.coverage,
+            "price_at_last": lv.price_at_last,
+            "touches": touch_points,
+            "line_points": line_points,
+            "slope_label": slope_label,
+        },
+    }
+
+
 async def ensure_scanner_initialized():
     """Initialize scanner once, reuse for all subsequent scans."""
     if scanner.initialized:
@@ -469,6 +607,10 @@ async def run_initial_scan():
     
     if search_mode == "fibo_scan":
         await run_initial_fibo_scan()
+        return
+    
+    if search_mode == "level_scan":
+        await run_initial_level_scan()
         return
     
     if current_reference is None:
@@ -785,7 +927,7 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, _init_task, _pending_initial_scan, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter, fibo_scan_seen, search_fibo_min_touches, search_fibo_min_quality
+    global is_scanning, scan_task, _init_task, _pending_initial_scan, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter, fibo_scan_seen, search_fibo_min_touches, search_fibo_min_quality, level_scan_seen, search_level_min_touches
     
     if data is None:
         data = StartScanRequest()
@@ -797,9 +939,11 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     search_timeframe_filter = data.timeframe_filter if data.timeframe_filter != "all" else None
     search_fibo_min_touches = data.fibo_min_touches
     search_fibo_min_quality = data.fibo_min_quality
+    search_level_min_touches = data.level_min_touches
     type_scan_seen = set()
     candle_scan_seen = set()
     fibo_scan_seen = set()
+    level_scan_seen = set()
     
     if data.mode == "candle_scan":
         if data.candle_filter is None:
@@ -842,11 +986,15 @@ async def start_scan(data: Optional[StartScanRequest] = None):
         current_reference = None
         current_structure_id = None
 
+    elif data.mode == "level_scan":
+        current_reference = None
+        current_structure_id = None
+
     elif data.mode == "manual":
         if current_reference is None:
             raise HTTPException(status_code=400, detail="No manual structure created. Create one first.")
     else:
-        raise HTTPException(status_code=400, detail="Invalid mode. Use 'preset', 'uploaded', 'manual', 'type_scan', 'candle_scan', or 'fibo_scan'")
+        raise HTTPException(status_code=400, detail="Invalid mode")
     
     if is_scanning:
         if scan_task:
