@@ -595,52 +595,58 @@ class StructureExtractor:
 
     def _detect_impulse(self, line: np.ndarray) -> Tuple[bool, str, float]:
         n = len(line)
-        if n < 10:
+        if n < 15:
             return False, "", 0.0
-        
-        segment_size = max(3, n // 5)
+
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return False, "", 0.0
+
         best_confidence = 0.0
         best_direction = ""
-        
-        diffs = np.diff(line)
-        abs_diffs = np.abs(diffs)
-        mean_move = np.mean(abs_diffs)
-        
-        for i in range(n - segment_size):
-            segment_move = abs(line[i + segment_size] - line[i])
-            
-            avg_move_before = np.mean(abs_diffs[:max(1, i)]) if i > 0 else mean_move
-            
-            if avg_move_before > 0:
-                impulse_ratio = (segment_move / segment_size) / (avg_move_before + 1e-10)
+
+        segment_size = max(3, n // 5)
+        for start in range(n - segment_size):
+            end = start + segment_size
+            seg_move = line[end] - line[start]
+            seg_abs = abs(seg_move)
+            move_pct = seg_abs / price_range
+
+            if move_pct < 0.55:
+                continue
+
+            before = line[:start] if start > 3 else None
+            after = line[end:] if end < n - 3 else None
+
+            calm_before = True
+            if before is not None and len(before) > 3:
+                before_range = (np.max(before) - np.min(before)) / price_range
+                calm_before = before_range < 0.35
+
+            calm_after = True
+            if after is not None and len(after) > 3:
+                after_range = (np.max(after) - np.min(after)) / price_range
+                calm_after = after_range < 0.35
+
+            if not (calm_before or calm_after):
+                continue
+
+            seg_diffs = np.diff(line[start:end+1])
+            if seg_move > 0:
+                directional_ratio = np.sum(seg_diffs > 0) / len(seg_diffs)
             else:
-                impulse_ratio = 0
-            
-            price_range = np.max(line) - np.min(line)
-            if price_range > 0:
-                move_pct = segment_move / price_range
-                if move_pct > 0.5 and impulse_ratio > 3:
-                    confidence = min(1.0, move_pct * 0.5 + impulse_ratio * 0.1)
-                    if confidence > best_confidence:
-                        best_confidence = confidence
-                        best_direction = "up" if line[i + segment_size] > line[i] else "down"
-        
-        last_quarter = line[int(n * 0.75):]
-        first_three_quarters = line[:int(n * 0.75)]
-        
-        if len(last_quarter) > 1 and len(first_three_quarters) > 1:
-            last_range = np.max(last_quarter) - np.min(last_quarter)
-            price_range = np.max(line) - np.min(line)
-            
-            if price_range > 0 and last_range / price_range > 0.6:
-                last_trend = last_quarter[-1] - last_quarter[0]
-                if abs(last_trend) / price_range > 0.4:
-                    confidence = min(1.0, (last_range / price_range) * 0.6 + abs(last_trend) / price_range * 0.4)
-                    if confidence > best_confidence:
-                        best_confidence = confidence
-                        best_direction = "up" if last_trend > 0 else "down"
-        
-        return best_confidence > 0.5, best_direction, best_confidence
+                directional_ratio = np.sum(seg_diffs < 0) / len(seg_diffs)
+
+            if directional_ratio < 0.6:
+                continue
+
+            conf = move_pct * 0.5 + directional_ratio * 0.3 + 0.2
+            conf = min(1.0, conf)
+            if conf > best_confidence:
+                best_confidence = conf
+                best_direction = "up" if seg_move > 0 else "down"
+
+        return best_confidence > 0.55, best_direction, best_confidence
 
     def _detect_double_top(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, float]:
         highs = [p for p in pivots if p.is_high]
@@ -767,147 +773,208 @@ class StructureExtractor:
         return best_conf > 0.5, best_dir, best_conf
 
     def _detect_wedge(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, str, float]:
-        highs = [p for p in pivots if p.is_high]
-        lows = [p for p in pivots if not p.is_high]
-        if len(highs) < 2 or len(lows) < 2:
+        high_pivots = [p for p in pivots if p.is_high]
+        low_pivots = [p for p in pivots if not p.is_high]
+        if len(high_pivots) < 2 or len(low_pivots) < 2:
             return False, "", 0.0
         price_range = np.max(line) - np.min(line)
         if price_range == 0:
             return False, "", 0.0
-        
-        high_slope = (highs[-1].value - highs[0].value) / (highs[-1].index - highs[0].index + 1e-10)
-        low_slope = (lows[-1].value - lows[0].value) / (lows[-1].index - lows[0].index + 1e-10)
-        
-        spread_start = abs(highs[0].value - lows[0].value) if highs and lows else 0
-        spread_end = abs(highs[-1].value - lows[-1].value) if highs and lows else 0
-        
-        if spread_start == 0:
+
+        h_indices = np.array([p.index for p in high_pivots], dtype=float)
+        h_values = np.array([p.value for p in high_pivots])
+        l_indices = np.array([p.index for p in low_pivots], dtype=float)
+        l_values = np.array([p.value for p in low_pivots])
+
+        h_slope_raw, h_int, h_r, _, _ = linregress(h_indices, h_values)
+        l_slope_raw, l_int, l_r, _, _ = linregress(l_indices, l_values)
+
+        both_up = h_slope_raw > 0 and l_slope_raw > 0
+        both_down = h_slope_raw < 0 and l_slope_raw < 0
+
+        if not (both_up or both_down):
             return False, "", 0.0
-        
-        convergence = 1.0 - spread_end / spread_start
-        if convergence < 0.2:
+
+        first_idx = min(pivots[0].index, 0)
+        last_idx = max(pivots[-1].index, len(line) - 1)
+        spread_start = (h_int + h_slope_raw * first_idx) - (l_int + l_slope_raw * first_idx)
+        spread_end = (h_int + h_slope_raw * last_idx) - (l_int + l_slope_raw * last_idx)
+
+        if spread_start <= 0 or spread_end <= 0:
             return False, "", 0.0
-        
-        conf = min(1.0, convergence * 0.6 + 0.4)
-        
-        if high_slope > 0 and low_slope > 0:
+
+        convergence = 1.0 - (spread_end / spread_start)
+        if convergence < 0.15:
+            return False, "", 0.0
+
+        h_residuals = np.abs(h_values - (h_int + h_slope_raw * h_indices))
+        l_residuals = np.abs(l_values - (l_int + l_slope_raw * l_indices))
+        fit_score = max(0, 1.0 - (np.mean(h_residuals) + np.mean(l_residuals)) / (2 * price_range))
+
+        if fit_score < 0.7:
+            return False, "", 0.0
+
+        conf = convergence * 0.4 + fit_score * 0.4 + 0.2
+        conf = min(1.0, conf)
+
+        if both_up:
             return True, "rising", conf
-        if high_slope < 0 and low_slope < 0:
+        else:
             return True, "falling", conf
-        
-        return False, "", 0.0
 
     def _detect_squeeze(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, str, float]:
         if len(pivots) < 4:
             return False, "", 0.0
-        
+
         highs = [p.value for p in pivots if p.is_high]
         lows = [p.value for p in pivots if not p.is_high]
-        
+
         if len(highs) < 2 or len(lows) < 2:
             return False, "", 0.0
-        
+
         price_range = np.max(line) - np.min(line)
         if price_range == 0:
             return False, "", 0.0
-        
+
+        overall_move = abs(line[-1] - line[0]) / price_range
+        if overall_move > 0.4:
+            return False, "", 0.0
+
         high_range = (max(highs) - min(highs)) / price_range
         low_range = (max(lows) - min(lows)) / price_range
         high_trend = (highs[-1] - highs[0]) / price_range
         low_trend = (lows[-1] - lows[0]) / price_range
-        
-        if high_range < 0.25 and low_trend > 0.08:
-            conf = (1.0 - high_range / 0.25) * 0.4 + min(1.0, low_trend / 0.2) * 0.4 + 0.2
+
+        if high_range < 0.2 and low_trend > 0.1:
+            conf = (1.0 - high_range / 0.2) * 0.4 + min(1.0, low_trend / 0.25) * 0.4 + 0.2
             return True, "up", conf
-        
-        if low_range < 0.25 and high_trend < -0.08:
-            conf = (1.0 - low_range / 0.25) * 0.4 + min(1.0, abs(high_trend) / 0.2) * 0.4 + 0.2
+
+        if low_range < 0.2 and high_trend < -0.1:
+            conf = (1.0 - low_range / 0.2) * 0.4 + min(1.0, abs(high_trend) / 0.25) * 0.4 + 0.2
             return True, "down", conf
-        
+
         return False, "", 0.0
 
     def _detect_triangle(self, pivots: List[PivotPoint], line: np.ndarray, compression: float) -> Tuple[bool, float]:
-        if compression < 0.2 or len(pivots) < 4:
+        high_pivots = [p for p in pivots if p.is_high]
+        low_pivots = [p for p in pivots if not p.is_high]
+
+        if len(high_pivots) < 2 or len(low_pivots) < 2:
             return False, 0.0
-        
-        highs = [p.value for p in pivots if p.is_high]
-        lows = [p.value for p in pivots if not p.is_high]
-        
-        if not highs or not lows:
+
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
             return False, 0.0
-        
-        if len(highs) > 1 and len(lows) > 1:
-            high_trend = (highs[-1] - highs[0])
-            low_trend = (lows[-1] - lows[0])
-            
-            if high_trend < 0 and low_trend > 0:
-                price_range = np.max(line) - np.min(line)
-                if price_range > 0:
-                    convergence = abs(high_trend) / price_range + abs(low_trend) / price_range
-                    conf = min(1.0, convergence * 2 + compression * 0.3)
-                    return True, conf
-        
-        return False, 0.0
+
+        overall_trend = abs(line[-1] - line[0]) / price_range
+        if overall_trend > 0.5:
+            return False, 0.0
+
+        h_indices = np.array([p.index for p in high_pivots], dtype=float)
+        h_values = np.array([p.value for p in high_pivots])
+        l_indices = np.array([p.index for p in low_pivots], dtype=float)
+        l_values = np.array([p.value for p in low_pivots])
+
+        if len(h_indices) >= 2:
+            h_slope, h_intercept, h_r, _, _ = linregress(h_indices, h_values)
+        else:
+            return False, 0.0
+        if len(l_indices) >= 2:
+            l_slope, l_intercept, l_r, _, _ = linregress(l_indices, l_values)
+        else:
+            return False, 0.0
+
+        converging = h_slope < 0 and l_slope > 0
+        descending = h_slope < 0 and abs(l_slope) < abs(h_slope) * 0.3
+        ascending = l_slope > 0 and abs(h_slope) < abs(l_slope) * 0.3
+
+        if not (converging or descending or ascending):
+            return False, 0.0
+
+        first_idx = min(pivots[0].index, 0)
+        last_idx = max(pivots[-1].index, len(line) - 1)
+        span = last_idx - first_idx + 1e-10
+
+        spread_start = (h_intercept + h_slope * first_idx) - (l_intercept + l_slope * first_idx)
+        spread_end = (h_intercept + h_slope * last_idx) - (l_intercept + l_slope * last_idx)
+
+        if spread_start <= 0:
+            return False, 0.0
+
+        convergence_ratio = 1.0 - (spread_end / spread_start) if spread_start > 0 else 0
+        if convergence_ratio < 0.15:
+            return False, 0.0
+
+        if spread_end < 0:
+            return False, 0.0
+
+        h_residuals = np.abs(h_values - (h_intercept + h_slope * h_indices))
+        l_residuals = np.abs(l_values - (l_intercept + l_slope * l_indices))
+        h_fit = 1.0 - np.mean(h_residuals) / price_range
+        l_fit = 1.0 - np.mean(l_residuals) / price_range
+        fit_score = max(0, (h_fit + l_fit) / 2)
+
+        if fit_score < 0.7:
+            return False, 0.0
+
+        pivot_count_score = min(1.0, (len(high_pivots) + len(low_pivots)) / 6.0)
+
+        conf = convergence_ratio * 0.35 + fit_score * 0.35 + pivot_count_score * 0.2 + max(0, compression) * 0.1
+        conf = min(1.0, conf)
+
+        return conf > 0.4, conf
 
     def _detect_trend(self, pivots: List[PivotPoint], line: np.ndarray, trend_slope: float) -> Tuple[bool, str, float]:
-        """Detect trend with strict criteria: higher highs + higher lows for uptrend, etc."""
-        if abs(trend_slope) < 0.25:
-            return False, "", 0.0
-        
-        highs = [p for p in pivots if p.is_high]
-        lows = [p for p in pivots if not p.is_high]
-        
-        if len(highs) < 2 or len(lows) < 2:
-            if abs(trend_slope) > 0.5:
-                direction = "up" if trend_slope > 0 else "down"
-                return True, direction, min(1.0, abs(trend_slope) * 0.7)
-            return False, "", 0.0
-        
+        n = len(line)
         price_range = np.max(line) - np.min(line)
         if price_range == 0:
             return False, "", 0.0
-        
-        hh_count = 0
-        for i in range(1, len(highs)):
-            if highs[i].value > highs[i-1].value:
-                hh_count += 1
+
+        overall_move = (line[-1] - line[0]) / price_range
+
+        highs = [p for p in pivots if p.is_high]
+        lows = [p for p in pivots if not p.is_high]
+
+        if len(highs) < 2 or len(lows) < 2:
+            if abs(overall_move) > 0.4 and abs(trend_slope) > 0.3:
+                direction = "up" if trend_slope > 0 else "down"
+                conf = min(1.0, abs(overall_move) * 0.5 + abs(trend_slope) * 0.5)
+                return True, direction, conf
+            return False, "", 0.0
+
+        hh_count = sum(1 for i in range(1, len(highs)) if highs[i].value > highs[i-1].value)
+        hl_count = sum(1 for i in range(1, len(lows)) if lows[i].value > lows[i-1].value)
+        lh_count = sum(1 for i in range(1, len(highs)) if highs[i].value < highs[i-1].value)
+        ll_count = sum(1 for i in range(1, len(lows)) if lows[i].value < lows[i-1].value)
+
         hh_ratio = hh_count / (len(highs) - 1)
-        
-        hl_count = 0
-        for i in range(1, len(lows)):
-            if lows[i].value > lows[i-1].value:
-                hl_count += 1
         hl_ratio = hl_count / (len(lows) - 1)
-        
-        lh_count = 0
-        for i in range(1, len(highs)):
-            if highs[i].value < highs[i-1].value:
-                lh_count += 1
         lh_ratio = lh_count / (len(highs) - 1)
-        
-        ll_count = 0
-        for i in range(1, len(lows)):
-            if lows[i].value < lows[i-1].value:
-                ll_count += 1
         ll_ratio = ll_count / (len(lows) - 1)
-        
-        n = len(line)
-        last_quarter = line[int(n * 0.75):]
-        first_quarter = line[:int(n * 0.25)]
-        last_vs_first = (np.mean(last_quarter) - np.mean(first_quarter)) / price_range
-        
-        if trend_slope > 0 and hh_ratio >= 0.5 and hl_ratio >= 0.5 and last_vs_first > 0.15:
-            slope_score = min(1.0, abs(trend_slope))
-            hh_hl_score = (hh_ratio + hl_ratio) / 2
-            conf = slope_score * 0.4 + hh_hl_score * 0.4 + min(1.0, last_vs_first) * 0.2
-            return True, "up", conf
-        
-        if trend_slope < 0 and lh_ratio >= 0.5 and ll_ratio >= 0.5 and last_vs_first < -0.15:
-            slope_score = min(1.0, abs(trend_slope))
-            lh_ll_score = (lh_ratio + ll_ratio) / 2
-            conf = slope_score * 0.4 + lh_ll_score * 0.4 + min(1.0, abs(last_vs_first)) * 0.2
-            return True, "down", conf
-        
+
+        x = np.arange(n, dtype=float)
+        slope, intercept, r_value, _, _ = linregress(x, line)
+        r_sq = r_value ** 2
+
+        if overall_move > 0.15 and (hh_ratio >= 0.5 or hl_ratio >= 0.5):
+            pivot_score = (hh_ratio + hl_ratio) / 2
+            move_score = min(1.0, abs(overall_move))
+            conf = move_score * 0.35 + pivot_score * 0.35 + r_sq * 0.3
+            if conf > 0.35:
+                return True, "up", min(1.0, conf)
+
+        if overall_move < -0.15 and (lh_ratio >= 0.5 or ll_ratio >= 0.5):
+            pivot_score = (lh_ratio + ll_ratio) / 2
+            move_score = min(1.0, abs(overall_move))
+            conf = move_score * 0.35 + pivot_score * 0.35 + r_sq * 0.3
+            if conf > 0.35:
+                return True, "down", min(1.0, conf)
+
+        if abs(overall_move) > 0.55 and r_sq > 0.5:
+            direction = "up" if overall_move > 0 else "down"
+            conf = min(1.0, abs(overall_move) * 0.5 + r_sq * 0.5)
+            return True, direction, conf
+
         return False, "", 0.0
     
     def calculate_pivot_slopes(self, pivots: List[PivotPoint], line: np.ndarray) -> List[float]:
@@ -1037,112 +1104,125 @@ class StructureExtractor:
 
     def classify_structure(self, trend: float, compression: float, 
                           pivots: List[PivotPoint], line: np.ndarray) -> Tuple[StructureType, float]:
-        candidates = []
-        
+        price_range = np.max(line) - np.min(line)
+        if price_range == 0:
+            return StructureType.UNKNOWN, 0.0
+
+        overall_move = abs(line[-1] - line[0]) / price_range
+
+        trend_detected, trend_dir, trend_conf = self._detect_trend(pivots, line, trend)
+
         is_impulse, impulse_dir, impulse_conf = self._detect_impulse(line)
-        if is_impulse:
+        if is_impulse and impulse_conf > 0.65:
             if impulse_dir == "up":
-                candidates.append((StructureType.IMPULSE_UP, impulse_conf))
+                return StructureType.IMPULSE_UP, impulse_conf
             else:
-                candidates.append((StructureType.IMPULSE_DOWN, impulse_conf))
-        
+                return StructureType.IMPULSE_DOWN, impulse_conf
+
+        if trend_detected and trend_conf > 0.6 and overall_move > 0.4:
+            if trend_dir == "up":
+                return StructureType.TREND_UP, trend_conf
+            else:
+                return StructureType.TREND_DOWN, trend_conf
+
         n = len(line)
-        if n > 10:
-            flat_portion = line[:int(n * 0.7)]
-            spike_portion = line[int(n * 0.7):]
-            if len(flat_portion) > 1 and len(spike_portion) > 1:
+        breakout_detected = False
+        breakout_conf = 0.0
+        if n > 15:
+            flat_portion = line[:int(n * 0.65)]
+            spike_portion = line[int(n * 0.65):]
+            if len(flat_portion) > 3 and len(spike_portion) > 3:
                 flat_range = np.max(flat_portion) - np.min(flat_portion)
                 spike_range = np.max(spike_portion) - np.min(spike_portion)
-                total_range = np.max(line) - np.min(line)
-                
-                if total_range > 0 and flat_range / total_range < 0.3 and spike_range / total_range > 0.5:
-                    breakout_conf = (1.0 - flat_range / total_range) * 0.5 + spike_range / total_range * 0.5
-                    candidates.append((StructureType.BREAKOUT, breakout_conf))
-        
+                if price_range > 0 and flat_range / price_range < 0.25 and spike_range / price_range > 0.55:
+                    breakout_conf = (1.0 - flat_range / price_range) * 0.5 + spike_range / price_range * 0.5
+                    breakout_detected = breakout_conf > 0.6
+
+        candidates = []
+
+        if breakout_detected:
+            candidates.append((StructureType.BREAKOUT, breakout_conf))
+
         is_flag, flag_dir, flag_conf = self._detect_flag(line, pivots)
         if is_flag:
             if flag_dir == "bull":
                 candidates.append((StructureType.BULL_FLAG, flag_conf))
             else:
                 candidates.append((StructureType.BEAR_FLAG, flag_conf))
-        
+
         is_hs, hs_conf = self._detect_head_shoulders(pivots, line)
         if is_hs:
             candidates.append((StructureType.HEAD_SHOULDERS, hs_conf))
-        
+
         is_ihs, ihs_conf = self._detect_inv_head_shoulders(pivots, line)
         if is_ihs:
             candidates.append((StructureType.INV_HEAD_SHOULDERS, ihs_conf))
-        
+
         is_dt, dt_conf = self._detect_double_top(pivots, line)
         if is_dt:
             candidates.append((StructureType.DOUBLE_TOP, dt_conf))
-        
+
         is_db, db_conf = self._detect_double_bottom(pivots, line)
         if is_db:
             candidates.append((StructureType.DOUBLE_BOTTOM, db_conf))
-        
+
         is_wedge, wedge_dir, wedge_conf = self._detect_wedge(pivots, line)
         if is_wedge:
             if wedge_dir == "rising":
                 candidates.append((StructureType.RISING_WEDGE, wedge_conf))
             else:
                 candidates.append((StructureType.FALLING_WEDGE, wedge_conf))
-        
+
         is_squeeze, squeeze_dir, squeeze_conf = self._detect_squeeze(pivots, line)
         if is_squeeze:
             if squeeze_dir == "up":
                 candidates.append((StructureType.SQUEEZE_UP, squeeze_conf))
             else:
                 candidates.append((StructureType.SQUEEZE_DOWN, squeeze_conf))
-        
+
         is_triangle, triangle_conf = self._detect_triangle(pivots, line, compression)
         if is_triangle:
             candidates.append((StructureType.TRIANGLE, triangle_conf))
-        
-        if compression > 0.3:
-            candidates.append((StructureType.COMPRESSION, min(1.0, compression * 0.8)))
-        
-        if abs(trend) < 0.1:
-            highs = [p.value for p in pivots if p.is_high]
-            lows = [p.value for p in pivots if not p.is_high]
-            
-            if highs and lows:
-                price_range = max(line) - min(line)
-                if price_range > 0:
-                    high_range = (max(highs) - min(highs)) / price_range if len(highs) > 1 else 0
-                    low_range = (max(lows) - min(lows)) / price_range if len(lows) > 1 else 0
-                    if high_range < 0.2 and low_range < 0.2:
-                        range_conf = (1.0 - high_range) * 0.3 + (1.0 - low_range) * 0.3 + (1.0 - abs(trend)) * 0.4
-                        candidates.append((StructureType.RANGE, range_conf))
-        
-        if len(pivots) >= 3:
-            recent_pivots = pivots[-3:]
-            if len(recent_pivots) >= 2:
-                if any(p.is_high for p in recent_pivots[:-1]) and not recent_pivots[-1].is_high:
-                    candidates.append((StructureType.RETEST, 0.4))
-        
-        trend_detected, trend_dir, trend_conf = self._detect_trend(pivots, line, trend)
-        if trend_detected:
+
+        if trend_detected and trend_conf > 0.35:
             if trend_dir == "up":
                 candidates.append((StructureType.TREND_UP, trend_conf))
             else:
                 candidates.append((StructureType.TREND_DOWN, trend_conf))
-        
-        if abs(trend) < 0.15 and len(pivots) >= 3:
-            candidates.append((StructureType.ACCUMULATION, 0.35))
-        
+
+        if is_impulse and impulse_conf > 0.55:
+            if impulse_dir == "up":
+                candidates.append((StructureType.IMPULSE_UP, impulse_conf))
+            else:
+                candidates.append((StructureType.IMPULSE_DOWN, impulse_conf))
+
+        if abs(trend) < 0.1 and overall_move < 0.2:
+            highs = [p.value for p in pivots if p.is_high]
+            lows = [p.value for p in pivots if not p.is_high]
+            if len(highs) >= 2 and len(lows) >= 2:
+                high_range = (max(highs) - min(highs)) / price_range
+                low_range = (max(lows) - min(lows)) / price_range
+                if high_range < 0.15 and low_range < 0.15:
+                    range_conf = (1.0 - high_range) * 0.3 + (1.0 - low_range) * 0.3 + (1.0 - abs(trend)) * 0.4
+                    candidates.append((StructureType.RANGE, range_conf))
+
+        if compression > 0.35 and overall_move < 0.3:
+            candidates.append((StructureType.COMPRESSION, min(1.0, compression * 0.7)))
+
+        if abs(trend) < 0.12 and len(pivots) >= 4 and overall_move < 0.2:
+            candidates.append((StructureType.ACCUMULATION, 0.3))
+
         if not candidates:
             return StructureType.UNKNOWN, 0.0
-        
+
         candidates.sort(key=lambda x: x[1], reverse=True)
         best_type, best_conf = candidates[0]
-        
+
         if len(candidates) > 1:
             second_conf = candidates[1][1]
-            if best_conf - second_conf < 0.1:
+            if best_conf - second_conf < 0.08:
                 best_conf *= 0.85
-        
+
         return best_type, float(best_conf)
     
     def create_feature_vector(self, normalized_line: np.ndarray, 
