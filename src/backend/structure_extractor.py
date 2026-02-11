@@ -867,13 +867,37 @@ class StructureExtractor:
             return False, 0.0
 
         overall_trend = abs(line[-1] - line[0]) / price_range
-        if overall_trend > 0.5:
+        if overall_trend > 0.35:
             return False, 0.0
 
+        max_move = (np.max(line) - np.min(line))
+        mid_idx = len(line) // 2
+        first_half_range = np.max(line[:mid_idx]) - np.min(line[:mid_idx]) if mid_idx > 0 else 0
+        second_half_range = np.max(line[mid_idx:]) - np.min(line[mid_idx:]) if mid_idx < len(line) else 0
+        if first_half_range > 0 and second_half_range > 0:
+            half_ratio = max(first_half_range, second_half_range) / min(first_half_range, second_half_range)
+            if half_ratio > 3.0:
+                return False, 0.0
+
+        h_values_raw = np.array([p.value for p in high_pivots])
+        l_values_raw = np.array([p.value for p in low_pivots])
+
+        if len(h_values_raw) >= 3:
+            h_max = np.max(h_values_raw)
+            h_others = np.sort(h_values_raw)[-2]
+            if (h_max - h_others) / price_range > 0.4:
+                return False, 0.0
+
+        if len(l_values_raw) >= 3:
+            l_min = np.min(l_values_raw)
+            l_others = np.sort(l_values_raw)[1]
+            if (l_others - l_min) / price_range > 0.4:
+                return False, 0.0
+
         h_indices = np.array([p.index for p in high_pivots], dtype=float)
-        h_values = np.array([p.value for p in high_pivots])
+        h_values = h_values_raw
         l_indices = np.array([p.index for p in low_pivots], dtype=float)
-        l_values = np.array([p.value for p in low_pivots])
+        l_values = l_values_raw
 
         if len(h_indices) >= 2:
             h_slope, h_intercept, h_r, _, _ = linregress(h_indices, h_values)
@@ -884,6 +908,19 @@ class StructureExtractor:
         else:
             return False, 0.0
 
+        if len(h_values) >= 3:
+            h_diffs = np.diff(h_values)
+            h_direction_changes = np.sum(h_diffs[:-1] * h_diffs[1:] < 0) if len(h_diffs) > 1 else 0
+            h_consistent = np.sum(h_diffs < 0) / len(h_diffs)
+            if h_consistent < 0.5 and h_slope < 0:
+                return False, 0.0
+
+        if len(l_values) >= 3:
+            l_diffs = np.diff(l_values)
+            l_consistent = np.sum(l_diffs > 0) / len(l_diffs)
+            if l_consistent < 0.5 and l_slope > 0:
+                return False, 0.0
+
         converging = h_slope < 0 and l_slope > 0
         descending = h_slope < 0 and abs(l_slope) < abs(h_slope) * 0.3
         ascending = l_slope > 0 and abs(h_slope) < abs(l_slope) * 0.3
@@ -893,7 +930,6 @@ class StructureExtractor:
 
         first_idx = min(pivots[0].index, 0)
         last_idx = max(pivots[-1].index, len(line) - 1)
-        span = last_idx - first_idx + 1e-10
 
         spread_start = (h_intercept + h_slope * first_idx) - (l_intercept + l_slope * first_idx)
         spread_end = (h_intercept + h_slope * last_idx) - (l_intercept + l_slope * last_idx)
@@ -914,7 +950,16 @@ class StructureExtractor:
         l_fit = 1.0 - np.mean(l_residuals) / price_range
         fit_score = max(0, (h_fit + l_fit) / 2)
 
-        if fit_score < 0.7:
+        if fit_score < 0.75:
+            return False, 0.0
+
+        h_r2 = h_r ** 2 if len(h_indices) >= 2 else 0
+        l_r2 = l_r ** 2 if len(l_indices) >= 2 else 0
+        if converging and (h_r2 < 0.3 or l_r2 < 0.3):
+            return False, 0.0
+        if descending and h_r2 < 0.4:
+            return False, 0.0
+        if ascending and l_r2 < 0.4:
             return False, 0.0
 
         pivot_count_score = min(1.0, (len(high_pivots) + len(low_pivots)) / 6.0)
@@ -922,7 +967,7 @@ class StructureExtractor:
         conf = convergence_ratio * 0.35 + fit_score * 0.35 + pivot_count_score * 0.2 + max(0, compression) * 0.1
         conf = min(1.0, conf)
 
-        return conf > 0.4, conf
+        return conf > 0.45, conf
 
     def _detect_trend(self, pivots: List[PivotPoint], line: np.ndarray, trend_slope: float) -> Tuple[bool, str, float]:
         n = len(line)
