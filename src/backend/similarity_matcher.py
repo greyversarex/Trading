@@ -106,6 +106,11 @@ class SimilarityMatcher:
         mirrored_slopes = [-s for s in features.pivot_slopes] if features.pivot_slopes else []
         mirrored_angles = [-a for a in features.pivot_angles] if features.pivot_angles else []
 
+        mirrored_patterns = {}
+        dp = getattr(features, 'detected_patterns', {}) or {}
+        for k, v in dp.items():
+            mirrored_patterns[k] = v
+
         return StructureFeatures(
             pivot_points=features.pivot_points,
             normalized_line=mirrored_line,
@@ -124,7 +129,8 @@ class SimilarityMatcher:
             convergence_rate=features.convergence_rate,
             breakout_strength=features.breakout_strength,
             avg_pivot_confidence=features.avg_pivot_confidence,
-            trend_consistency=features.trend_consistency
+            trend_consistency=features.trend_consistency,
+            detected_patterns=mirrored_patterns
         )
 
     def _dtw_distance(self, s1: np.ndarray, s2: np.ndarray, window: int = 10) -> float:
@@ -298,6 +304,18 @@ class SimilarityMatcher:
 
         return 0.25 * sym_sim + 0.25 * conv_sim + 0.25 * breakout_sim + 0.25 * trend_sim
 
+    def _pattern_overlap_bonus(self, features1: StructureFeatures,
+                              features2: StructureFeatures) -> float:
+        p1 = getattr(features1, 'detected_patterns', {}) or {}
+        p2 = getattr(features2, 'detected_patterns', {}) or {}
+        if not p1 or not p2:
+            return 0.0
+        shared = set(p1.keys()) & set(p2.keys())
+        if not shared:
+            return 0.0
+        best_overlap = max(min(p1[k], p2[k]) for k in shared)
+        return min(0.3, best_overlap * 0.4)
+
     def compare_shape(self, features1: StructureFeatures,
                      features2: StructureFeatures) -> float:
         trend_diff = abs(features1.trend_direction - features2.trend_direction)
@@ -314,13 +332,16 @@ class SimilarityMatcher:
         if t1 == t2:
             type_sim = 1.0
         elif self._same_category(t1, t2):
-            type_sim = 0.55
+            type_sim = 0.60
         elif self._are_opposites(t1, t2):
-            type_sim = 0.1
-        else:
             type_sim = 0.15
+        else:
+            type_sim = 0.35
 
-        return 0.15 * trend_sim + 0.10 * vol_ratio + 0.15 * comp_sim + 0.60 * type_sim
+        overlap = self._pattern_overlap_bonus(features1, features2)
+        type_sim = min(1.0, type_sim + overlap)
+
+        return 0.20 * trend_sim + 0.10 * vol_ratio + 0.20 * comp_sim + 0.50 * type_sim
 
     def _same_category(self, t1: StructureType, t2: StructureType) -> bool:
         for category in [DIRECTIONAL_TYPES, REVERSAL_TYPES, CONSOLIDATION_TYPES]:
@@ -340,16 +361,22 @@ class SimilarityMatcher:
         if t1 == t2:
             return 1.0
 
+        p1 = getattr(features1, 'detected_patterns', {}) or {}
+        p2 = getattr(features2, 'detected_patterns', {}) or {}
+        shared = set(p1.keys()) & set(p2.keys()) if p1 and p2 else set()
+        if shared:
+            return 0.95
+
         if self._are_opposites(t1, t2):
-            return 0.50
+            return 0.55
 
         if self._same_category(t1, t2):
-            return 0.85
+            return 0.90
 
         if t1 == StructureType.UNKNOWN or t2 == StructureType.UNKNOWN:
             return 0.90
 
-        return 0.65
+        return 0.75
 
     def _confidence_multiplier(self, features: StructureFeatures) -> float:
         conf = getattr(features, 'pattern_confidence', 0.5)

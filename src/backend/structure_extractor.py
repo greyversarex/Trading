@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.signal import argrelextrema, savgol_filter
 from scipy.stats import linregress
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -80,6 +80,7 @@ class StructureFeatures:
     breakout_strength: float = 0.0
     avg_pivot_confidence: float = 0.0
     trend_consistency: float = 0.0
+    detected_patterns: Dict[str, float] = field(default_factory=dict)
 
 
 class StructureExtractor:
@@ -1148,31 +1149,31 @@ class StructureExtractor:
         return float((hh_score + hl_score) / 2)
 
     def classify_structure(self, trend: float, compression: float, 
-                          pivots: List[PivotPoint], line: np.ndarray) -> Tuple[StructureType, float]:
+                          pivots: List[PivotPoint], line: np.ndarray) -> Tuple[StructureType, float, Dict[str, float]]:
         price_range = np.max(line) - np.min(line)
         if price_range == 0:
-            return StructureType.UNKNOWN, 0.0
+            return StructureType.UNKNOWN, 0.0, {}
 
         overall_move = abs(line[-1] - line[0]) / price_range
 
         trend_detected, trend_dir, trend_conf = self._detect_trend(pivots, line, trend)
-
         is_impulse, impulse_dir, impulse_conf = self._detect_impulse(line)
-        if is_impulse and impulse_conf > 0.65:
-            if impulse_dir == "up":
-                return StructureType.IMPULSE_UP, impulse_conf
-            else:
-                return StructureType.IMPULSE_DOWN, impulse_conf
 
-        if trend_detected and trend_conf > 0.6 and overall_move > 0.4:
-            if trend_dir == "up":
-                return StructureType.TREND_UP, trend_conf
+        candidates = []
+
+        if is_impulse and impulse_conf > 0.55:
+            if impulse_dir == "up":
+                candidates.append((StructureType.IMPULSE_UP, impulse_conf))
             else:
-                return StructureType.TREND_DOWN, trend_conf
+                candidates.append((StructureType.IMPULSE_DOWN, impulse_conf))
+
+        if trend_detected and trend_conf > 0.35:
+            if trend_dir == "up":
+                candidates.append((StructureType.TREND_UP, trend_conf))
+            else:
+                candidates.append((StructureType.TREND_DOWN, trend_conf))
 
         n = len(line)
-        breakout_detected = False
-        breakout_conf = 0.0
         if n > 15:
             flat_portion = line[:int(n * 0.65)]
             spike_portion = line[int(n * 0.65):]
@@ -1181,12 +1182,8 @@ class StructureExtractor:
                 spike_range = np.max(spike_portion) - np.min(spike_portion)
                 if price_range > 0 and flat_range / price_range < 0.25 and spike_range / price_range > 0.55:
                     breakout_conf = (1.0 - flat_range / price_range) * 0.5 + spike_range / price_range * 0.5
-                    breakout_detected = breakout_conf > 0.6
-
-        candidates = []
-
-        if breakout_detected:
-            candidates.append((StructureType.BREAKOUT, breakout_conf))
+                    if breakout_conf > 0.6:
+                        candidates.append((StructureType.BREAKOUT, breakout_conf))
 
         is_flag, flag_dir, flag_conf = self._detect_flag(line, pivots)
         if is_flag:
@@ -1229,18 +1226,6 @@ class StructureExtractor:
         if is_triangle:
             candidates.append((StructureType.TRIANGLE, triangle_conf))
 
-        if trend_detected and trend_conf > 0.35:
-            if trend_dir == "up":
-                candidates.append((StructureType.TREND_UP, trend_conf))
-            else:
-                candidates.append((StructureType.TREND_DOWN, trend_conf))
-
-        if is_impulse and impulse_conf > 0.55:
-            if impulse_dir == "up":
-                candidates.append((StructureType.IMPULSE_UP, impulse_conf))
-            else:
-                candidates.append((StructureType.IMPULSE_DOWN, impulse_conf))
-
         if abs(trend) < 0.1 and overall_move < 0.2:
             highs = [p.value for p in pivots if p.is_high]
             lows = [p.value for p in pivots if not p.is_high]
@@ -1258,7 +1243,13 @@ class StructureExtractor:
             candidates.append((StructureType.ACCUMULATION, 0.3))
 
         if not candidates:
-            return StructureType.UNKNOWN, 0.0
+            return StructureType.UNKNOWN, 0.0, {}
+
+        all_patterns: Dict[str, float] = {}
+        for st, conf in candidates:
+            key = st.value
+            if key not in all_patterns or conf > all_patterns[key]:
+                all_patterns[key] = round(float(conf), 3)
 
         candidates.sort(key=lambda x: x[1], reverse=True)
         best_type, best_conf = candidates[0]
@@ -1268,7 +1259,7 @@ class StructureExtractor:
             if best_conf - second_conf < 0.08:
                 best_conf *= 0.85
 
-        return best_type, float(best_conf)
+        return best_type, float(best_conf), all_patterns
     
     def create_feature_vector(self, normalized_line: np.ndarray, 
                              pivot_sequence: List[float],
@@ -1316,7 +1307,7 @@ class StructureExtractor:
         trend = self.calculate_trend(normalized_line)
         volatility = self.calculate_volatility(normalized_line)
         compression = self.calculate_compression(normalized_line, pivots)
-        structure_type, pattern_conf = self.classify_structure(trend, compression, pivots, normalized_line)
+        structure_type, pattern_conf, detected_patterns = self.classify_structure(trend, compression, pivots, normalized_line)
         
         pivot_slopes = self.calculate_pivot_slopes(pivots, normalized_line)
         pivot_angles = self.calculate_pivot_angles(pivots, normalized_line)
@@ -1349,7 +1340,8 @@ class StructureExtractor:
             convergence_rate=convergence,
             breakout_strength=breakout_str,
             avg_pivot_confidence=avg_conf,
-            trend_consistency=trend_consist
+            trend_consistency=trend_consist,
+            detected_patterns=detected_patterns
         )
     
     def extract_from_candles(self, closes: List[float]) -> Optional[StructureFeatures]:
@@ -1404,5 +1396,6 @@ class StructureExtractor:
             convergence_rate=data.get("convergence_rate", 0.0),
             breakout_strength=data.get("breakout_strength", 0.0),
             avg_pivot_confidence=data.get("avg_pivot_confidence", 0.0),
-            trend_consistency=data.get("trend_consistency", 0.0)
+            trend_consistency=data.get("trend_consistency", 0.0),
+            detected_patterns=data.get("detected_patterns", {})
         )

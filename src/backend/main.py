@@ -146,8 +146,8 @@ async def on_market_update(symbol: str, timeframe: str):
     
     structures = scanner.get_all_structures()
     
-    relevant = [(s, tf, f, ts) for s, tf, f, ts in structures 
-                if s == symbol and tf == timeframe]
+    relevant = [(s, tf, f, ts, ct) for s, tf, f, ts, ct in structures 
+                if s == symbol and (tf == timeframe or tf.startswith(f"{timeframe}_w"))]
     
     if not relevant:
         return
@@ -158,6 +158,7 @@ async def on_market_update(symbol: str, timeframe: str):
     
     for match in matches:
         match_id = None
+        base_tf = match.timeframe.split("_w")[0] if "_w" in match.timeframe else match.timeframe
         if current_structure_id:
             match_id = await database.save_match(current_structure_id, match)
         
@@ -166,7 +167,7 @@ async def on_market_update(symbol: str, timeframe: str):
             "data": {
                 "match_id": match_id,
                 "symbol": match.symbol,
-                "timeframe": match.timeframe,
+                "timeframe": base_tf,
                 "similarity_score": match.similarity_score,
                 "structure_type": match.structure_type.value,
                 "timestamp": match.timestamp,
@@ -179,7 +180,7 @@ async def on_market_update(symbol: str, timeframe: str):
 
 
 async def on_market_update_type_scan(symbol: str, timeframe: str):
-    """Callback for type-based scanning - no reference needed, just classify and filter."""
+    """Callback for type-based scanning - checks all detected patterns."""
     global search_type_filter, type_scan_seen, search_timeframe_filter
     
     if not search_type_filter:
@@ -190,29 +191,40 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
     
     structures = scanner.get_all_structures()
     relevant = [(s, tf, f, ts, ct) for s, tf, f, ts, ct in structures 
-                if s == symbol and tf == timeframe]
+                if s == symbol and (tf == timeframe or tf.startswith(f"{timeframe}_w"))]
     
     for sym, tf, features, timestamp, candle_time in relevant:
         if features is None:
             continue
-        if features.structure_type.value == search_type_filter:
-            key = f"{sym}_{tf}"
+        
+        detected = getattr(features, 'detected_patterns', {}) or {}
+        primary_match = features.structure_type.value == search_type_filter
+        secondary_match = search_type_filter in detected
+        
+        if primary_match or secondary_match:
+            base_tf = tf.split("_w")[0] if "_w" in tf else tf
+            key = f"{sym}_{base_tf}"
             if key in type_scan_seen:
                 continue
             type_scan_seen.add(key)
+            
+            conf = detected.get(search_type_filter, features.pattern_confidence) if secondary_match else features.pattern_confidence
+            score = round(conf * 100, 1) if not primary_match else 100.0
+            
             await broadcast_message({
                 "type": "match",
                 "data": {
                     "match_id": None,
                     "symbol": sym,
-                    "timeframe": tf,
-                    "similarity_score": 100.0,
-                    "structure_type": features.structure_type.value,
+                    "timeframe": base_tf,
+                    "similarity_score": score,
+                    "structure_type": search_type_filter,
                     "timestamp": timestamp,
                     "is_mirrored": False,
                     "normalized_line": features.normalized_line.tolist(),
                     "price_change_24h": scanner.price_change_24h.get(sym, 0),
-                    "pattern_time": candle_time
+                    "pattern_time": candle_time,
+                    "detected_patterns": detected
                 }
             })
 
@@ -624,12 +636,13 @@ async def run_initial_scan():
         if current_structure_id:
             match_id = await database.save_match(current_structure_id, match)
         
+        base_tf = match.timeframe.split("_w")[0] if "_w" in match.timeframe else match.timeframe
         await broadcast_message({
             "type": "match",
             "data": {
                 "match_id": match_id,
                 "symbol": match.symbol,
-                "timeframe": match.timeframe,
+                "timeframe": base_tf,
                 "similarity_score": match.similarity_score,
                 "structure_type": match.structure_type.value,
                 "timestamp": match.timestamp,
@@ -647,7 +660,7 @@ async def run_initial_scan():
 
 
 async def run_initial_type_scan():
-    """Run initial scan by structure type - no reference needed."""
+    """Run initial scan by structure type - checks all detected patterns, not just primary."""
     global search_type_filter, search_timeframe_filter
     
     if not search_type_filter:
@@ -655,27 +668,43 @@ async def run_initial_type_scan():
     
     structures = scanner.get_all_structures()
     match_count = 0
+    seen_keys = set()
     
     for sym, tf, features, timestamp, candle_time in structures:
         if features is None:
             continue
-        if search_timeframe_filter and tf != search_timeframe_filter:
+        base_tf = tf.split("_w")[0] if "_w" in tf else tf
+        if search_timeframe_filter and base_tf != search_timeframe_filter:
             continue
-        if features.structure_type.value == search_type_filter:
+        
+        detected = getattr(features, 'detected_patterns', {}) or {}
+        primary_match = features.structure_type.value == search_type_filter
+        secondary_match = search_type_filter in detected
+        
+        if primary_match or secondary_match:
+            dedup_key = f"{sym}_{base_tf}"
+            if dedup_key in seen_keys:
+                continue
+            seen_keys.add(dedup_key)
+            
+            conf = detected.get(search_type_filter, features.pattern_confidence) if secondary_match else features.pattern_confidence
+            score = round(conf * 100, 1) if not primary_match else 100.0
+            
             match_count += 1
             await broadcast_message({
                 "type": "match",
                 "data": {
                     "match_id": None,
                     "symbol": sym,
-                    "timeframe": tf,
-                    "similarity_score": 100.0,
-                    "structure_type": features.structure_type.value,
+                    "timeframe": base_tf,
+                    "similarity_score": score,
+                    "structure_type": search_type_filter,
                     "timestamp": timestamp,
                     "is_mirrored": False,
                     "normalized_line": features.normalized_line.tolist(),
                     "price_change_24h": scanner.price_change_24h.get(sym, 0),
-                    "pattern_time": candle_time
+                    "pattern_time": candle_time,
+                    "detected_patterns": detected
                 }
             })
     

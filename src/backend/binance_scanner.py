@@ -453,8 +453,10 @@ class BinanceScanner:
         except Exception as e:
             print(f"Error updating {symbol} {timeframe}: {e}")
     
+    WINDOW_SIZES = [30, 50, 70]
+
     def _update_structure(self, symbol: str, timeframe: str) -> bool:
-        """Update structure for a symbol/timeframe. Returns True if structure changed."""
+        """Update structure for a symbol/timeframe with sliding windows. Returns True if structure changed."""
         if symbol not in self.symbol_data:
             return False
         
@@ -468,6 +470,15 @@ class BinanceScanner:
         old_features = self.symbol_data[symbol].structures.get(timeframe)
         self.symbol_data[symbol].structures[timeframe] = features
         
+        for win_size in self.WINDOW_SIZES:
+            win_key = f"{timeframe}_w{win_size}"
+            if len(closes) >= win_size:
+                win_closes = closes[-win_size:]
+                win_features = self.structure_extractor.extract_from_candles(win_closes)
+                self.symbol_data[symbol].structures[win_key] = win_features
+            else:
+                self.symbol_data[symbol].structures[win_key] = None
+
         if symbol not in self.last_structures:
             self.last_structures[symbol] = {}
         self.last_structures[symbol][timeframe] = features
@@ -531,16 +542,17 @@ class BinanceScanner:
             self._poll_task = None
     
     def get_all_structures(self) -> List[tuple]:
-        """Get all current structures for matching."""
+        """Get all current structures for matching, including sliding window sub-segments."""
         results = []
         timestamp = datetime.now().isoformat()
         
         for symbol, data in self.symbol_data.items():
-            for timeframe, features in data.structures.items():
+            for tf_key, features in data.structures.items():
                 if features is not None:
-                    candles = data.candles.get(timeframe, [])
+                    base_tf = tf_key.split("_w")[0] if "_w" in tf_key else tf_key
+                    candles = data.candles.get(base_tf, [])
                     last_candle_time = candles[-1].close_time if candles else None
-                    results.append((symbol, timeframe, features, timestamp, last_candle_time))
+                    results.append((symbol, tf_key, features, timestamp, last_candle_time))
         
         return results
     
