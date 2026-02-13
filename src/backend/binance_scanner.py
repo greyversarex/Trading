@@ -50,8 +50,8 @@ class BinanceScanner:
         "1d": 100,
     }
     
-    BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-    BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr"
+    BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
+    BINANCE_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/24hr"
     
     BINANCE_TF_MAP = {
         "1m": "1m",

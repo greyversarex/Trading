@@ -233,14 +233,14 @@ class CandlePatternDetector:
             return []
 
         bullish_patterns = {
-            'hammer', 'inverted_hammer', 'bullish_engulfing', 'morning_star',
-            'three_white_soldiers', 'bullish_harami', 'tweezer_bottom',
-            'piercing_line', 'dragonfly_doji',
+            'hammer', 'inverted_hammer', 'engulfing_bull', 'morning_star',
+            'three_white_soldiers', 'harami_bull', 'tweezer_bottom',
+            'piercing_line',
         }
         bearish_patterns = {
-            'shooting_star', 'hanging_man', 'bearish_engulfing', 'evening_star',
-            'three_black_crows', 'bearish_harami', 'tweezer_top',
-            'dark_cloud_cover', 'gravestone_doji',
+            'shooting_star', 'engulfing_bear', 'evening_star',
+            'three_black_crows', 'harami_bear', 'tweezer_top',
+            'dark_cloud',
         }
 
         results = []
