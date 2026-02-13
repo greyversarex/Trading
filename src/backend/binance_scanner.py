@@ -80,6 +80,7 @@ class BinanceScanner:
         self._use_real_data: bool = True
         self._api_failures: int = 0
         self.initialized: bool = False
+        self._candle_hashes: Dict[str, int] = {}
     
     def _get_default_symbols(self) -> List[str]:
         """Return default crypto symbols."""
@@ -455,6 +456,12 @@ class BinanceScanner:
     
     WINDOW_SIZES = [30, 50, 70]
 
+    def _candle_hash(self, closes: list) -> int:
+        """Quick hash of close prices to detect changes."""
+        if len(closes) < 3:
+            return 0
+        return hash((len(closes), closes[0], closes[-1], closes[len(closes)//2]))
+
     def _update_structure(self, symbol: str, timeframe: str) -> bool:
         """Update structure for a symbol/timeframe with sliding windows. Returns True if structure changed."""
         if symbol not in self.symbol_data:
@@ -465,6 +472,13 @@ class BinanceScanner:
             return False
         
         closes = [c.close for c in candles]
+
+        cache_key = f"{symbol}_{timeframe}"
+        new_hash = self._candle_hash(closes)
+        if cache_key in self._candle_hashes and self._candle_hashes[cache_key] == new_hash:
+            return False
+        self._candle_hashes[cache_key] = new_hash
+
         features = self.structure_extractor.extract_from_candles(closes)
         
         old_features = self.symbol_data[symbol].structures.get(timeframe)

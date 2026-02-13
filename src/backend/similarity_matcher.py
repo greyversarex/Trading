@@ -499,16 +499,18 @@ class SimilarityMatcher:
 
         for m in matches:
             key = m.symbol
+            base_tf = m.timeframe.split("_w")[0] if "_w" in m.timeframe else m.timeframe
+
             if key not in best_per_symbol:
                 best_per_symbol[key] = [m]
             else:
                 existing = best_per_symbol[key]
                 dominated = False
-                for ex in existing:
-                    if ex.timeframe == m.timeframe:
+                for idx, ex in enumerate(existing):
+                    ex_base_tf = ex.timeframe.split("_w")[0] if "_w" in ex.timeframe else ex.timeframe
+                    if ex_base_tf == base_tf:
                         if m.similarity_score > ex.similarity_score:
-                            existing.remove(ex)
-                            existing.append(m)
+                            existing[idx] = m
                         dominated = True
                         break
                     if abs(m.similarity_score - ex.similarity_score) < 5.0:
