@@ -319,39 +319,41 @@ class BinanceScanner:
     
     async def _fetch_candles_session(self, session: aiohttp.ClientSession, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
         """Fetch candles using a shared session for batch operations."""
-        if self._use_real_data and symbol not in self._invalid_symbols:
-            binance_symbol = f"{symbol}USDT"
-            binance_interval = self.BINANCE_TF_MAP.get(interval, interval)
-            params = {"symbol": binance_symbol, "interval": binance_interval, "limit": limit}
-            try:
-                async with session.get(self.BINANCE_KLINES_URL, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        candles = []
-                        for k in data:
-                            candles.append(CandleData(
-                                open_time=int(k[0]), open=float(k[1]), high=float(k[2]),
-                                low=float(k[3]), close=float(k[4]), volume=float(k[5]),
-                                close_time=int(k[6])
-                            ))
-                        return candles
-                    else:
-                        self._invalid_symbols.add(symbol)
-            except Exception:
-                self._invalid_symbols.add(symbol)
-        return self._generate_realistic_candles(symbol, interval, limit)
+        if symbol in self._invalid_symbols:
+            return []
+        binance_symbol = f"{symbol}USDT"
+        binance_interval = self.BINANCE_TF_MAP.get(interval, interval)
+        params = {"symbol": binance_symbol, "interval": binance_interval, "limit": limit}
+        try:
+            async with session.get(self.BINANCE_KLINES_URL, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    candles = []
+                    for k in data:
+                        candles.append(CandleData(
+                            open_time=int(k[0]), open=float(k[1]), high=float(k[2]),
+                            low=float(k[3]), close=float(k[4]), volume=float(k[5]),
+                            close_time=int(k[6])
+                        ))
+                    return candles
+                else:
+                    self._invalid_symbols.add(symbol)
+                    print(f"Symbol {symbol} unavailable on Binance (status {response.status}), skipping")
+        except Exception as e:
+            self._invalid_symbols.add(symbol)
+            print(f"Failed to fetch {symbol}: {e}, skipping")
+        return []
 
     async def fetch_candles(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
-        """Fetch candle data from Binance API, fall back to simulation if unavailable."""
-        if self._use_real_data and symbol not in self._invalid_symbols:
-            candles = await self._fetch_binance_klines(symbol, interval, limit)
-            if candles:
-                return candles
-            else:
-                self._invalid_symbols.add(symbol)
-                print(f"Marking {symbol} as unavailable on Binance, using simulation")
-        
-        return self._generate_realistic_candles(symbol, interval, limit)
+        """Fetch candle data from Binance API. Returns empty list if unavailable."""
+        if symbol in self._invalid_symbols:
+            return []
+        candles = await self._fetch_binance_klines(symbol, interval, limit)
+        if candles:
+            return candles
+        self._invalid_symbols.add(symbol)
+        print(f"Marking {symbol} as unavailable on Binance, skipping")
+        return []
     
     def get_structure_stats(self) -> dict:
         """Get statistics about loaded structures."""
@@ -390,22 +392,17 @@ class BinanceScanner:
         await self._update_all_candles(progress_callback=progress_callback)
         self._update_all_structures()
         
-        real_symbols = set()
-        sim_symbols = set()
-        for sym in self.symbols:
-            if sym in self._invalid_symbols:
-                sim_symbols.add(sym)
-            else:
-                real_symbols.add(sym)
+        real_symbols = [sym for sym in self.symbols if sym not in self._invalid_symbols]
+        skipped_symbols = [sym for sym in self.symbols if sym in self._invalid_symbols]
         
-        if real_symbols and self._use_real_data:
+        if real_symbols:
             self.working_endpoint = "binance"
-            print(f"REAL data for {len(real_symbols)} symbols, simulated for {len(sim_symbols)}")
-            if sim_symbols:
-                print(f"Simulated symbols: {', '.join(sorted(sim_symbols))}")
+            print(f"REAL data for {len(real_symbols)} symbols, skipped {len(skipped_symbols)} unavailable")
+            if skipped_symbols:
+                print(f"Skipped symbols (no Binance data): {', '.join(sorted(skipped_symbols))}")
         else:
-            self.working_endpoint = "simulation"
-            print(f"Using simulated data")
+            self.working_endpoint = "no_data"
+            print(f"No real market data available")
         
         stats = self.get_structure_stats()
         print(f"Initialized: {stats['symbols_with_data']}/{stats['total_symbols']} symbols with {stats['total_structures']} structures")
