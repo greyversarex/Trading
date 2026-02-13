@@ -1,0 +1,58 @@
+root@spb-3-vm-slnj:~# cd /opt/Trading
+root@spb-3-vm-slnj:/opt/Trading# cd /opt/Trading
+python3 -m venv venv
+source venv/bin/activate
+pip install aiosqlite fastapi numpy opencv-python-headless pillow python-binance python-multipart scikit-learn scipy uvicorn websockets
+python run.py
+Requirement already satisfied: aiosqlite in ./venv/lib/python3.12/site-packages (0.22.1)
+Requirement already satisfied: fastapi in ./venv/lib/python3.12/site-packages (0.129.0)
+Requirement already satisfied: numpy in ./venv/lib/python3.12/site-packages (2.4.2)
+Requirement already satisfied: opencv-python-headless in ./venv/lib/python3.12/site-packages (4.13.0.92)
+Requirement already satisfied: pillow in ./venv/lib/python3.12/site-packages (12.1.1)
+Requirement already satisfied: python-binance in ./venv/lib/python3.12/site-packages (1.0.34)
+Requirement already satisfied: python-multipart in ./venv/lib/python3.12/site-packages (0.0.22)
+Requirement already satisfied: scikit-learn in ./venv/lib/python3.12/site-packages (1.8.0)
+Requirement already satisfied: scipy in ./venv/lib/python3.12/site-packages (1.17.0)
+Requirement already satisfied: uvicorn in ./venv/lib/python3.12/site-packages (0.40.0)
+Requirement already satisfied: websockets in ./venv/lib/python3.12/site-packages (16.0)
+Requirement already satisfied: starlette<1.0.0,>=0.40.0 in ./venv/lib/python3.12/site-packages (from fastapi) (0.52.1)
+Requirement already satisfied: pydantic>=2.7.0 in ./venv/lib/python3.12/site-packages (from fastapi) (2.12.5)
+Requirement already satisfied: typing-extensions>=4.8.0 in ./venv/lib/python3.12/site-packages (from fastapi) (4.15.0)
+Requirement already satisfied: typing-inspection>=0.4.2 in ./venv/lib/python3.12/site-packages (from fastapi) (0.4.2)
+Requirement already satisfied: annotated-doc>=0.0.2 in ./venv/lib/python3.12/site-packages (from fastapi) (0.0.4)
+Requirement already satisfied: requests in ./venv/lib/python3.12/site-packages (from python-binance) (2.32.5)
+Requirement already satisfied: six in ./venv/lib/python3.12/site-packages (from python-binance) (1.17.0)
+Requirement already satisfied: dateparser in ./venv/lib/python3.12/site-packages (from python-binance) (1.3.0)
+Requirement already satisfied: aiohttp in ./venv/lib/python3.12/site-packages (from python-binance) (3.13.3)
+Requirement already satisfied: pycryptodome in ./venv/lib/python3.12/site-packages (from python-binance) (3.23.0)
+Requirement already satisfied: joblib>=1.3.0 in ./venv/lib/python3.12/site-packages (from scikit-learn) (1.5.3)
+Requirement already satisfied: threadpoolctl>=3.2.0 in ./venv/lib/python3.12/site-packages (from scikit-learn) (3.6.0)
+Requirement already satisfied: click>=7.0 in ./venv/lib/python3.12/site-packages (from uvicorn) (8.3.1)
+Requirement already satisfied: h11>=0.8 in ./venv/lib/python3.12/site-packages (from uvicorn) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in ./venv/lib/python3.12/site-packages (from pydantic>=2.7.0->fastapi) (0.7.0)
+Requirement already satisfied: pydantic-core==2.41.5 in ./venv/lib/python3.12/site-packages (from pydantic>=2.7.0->fastapi) (2.41.5)
+Requirement already satisfied: anyio<5,>=3.6.2 in ./venv/lib/python3.12/site-packages (from starlette<1.0.0,>=0.40.0->fastapi) (4.12.1)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in ./venv/lib/python3.12/site-packages (from aiohttp->python-binance) (2.6.1)
+Requirement already satisfied: aiosignal>=1.4.0 in ./venv/lib/python3.12/site-packages (from aiohttp->python-binance) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in ./venv/lib/python3.12/site-packages (from aiohttp->python-binance) (25.4.0)
+Requirement already satisfied: frozenlist>=1.1.1 in ./venv/lib/python3.12/site-packages (from aiohttp->python-binance) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in ./venv/lib/python3.12/site-packages (from aiohttp->python-binance) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in ./venv/lib/python3.12/site-packages (from aiohttp->python-binance) (0.4.1)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in ./venv/lib/python3.12/site-packages (from aiohttp->python-binance) (1.22.0)
+Requirement already satisfied: python-dateutil>=2.7.0 in ./venv/lib/python3.12/site-packages (from dateparser->python-binance) (2.9.0.post0)
+Requirement already satisfied: pytz>=2024.2 in ./venv/lib/python3.12/site-packages (from dateparser->python-binance) (2025.2)
+Requirement already satisfied: regex>=2024.9.11 in ./venv/lib/python3.12/site-packages (from dateparser->python-binance) (2026.1.15)
+Requirement already satisfied: tzlocal>=0.2 in ./venv/lib/python3.12/site-packages (from dateparser->python-binance) (5.3.1)
+Requirement already satisfied: charset_normalizer<4,>=2 in ./venv/lib/python3.12/site-packages (from requests->python-binance) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in ./venv/lib/python3.12/site-packages (from requests->python-binance) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in ./venv/lib/python3.12/site-packages (from requests->python-binance) (2.6.3)
+Requirement already satisfied: certifi>=2017.4.17 in ./venv/lib/python3.12/site-packages (from requests->python-binance) (2026.1.4)
+INFO:     Started server process [7447]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+^CINFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [7447]
+(venv) root@spb-3-vm-slnj:/opt/Trading#
