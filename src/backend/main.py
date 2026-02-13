@@ -243,39 +243,39 @@ async def on_market_update_candle_scan(symbol: str, timeframe: str):
     if not candles or len(candles) < 5:
         return
     
-    patterns = candle_detector.detect_all(candles)
-    for pat in patterns:
-        if pat.value == search_candle_filter:
-            key = f"{symbol}_{timeframe}"
-            if key in candle_scan_seen:
-                continue
-            candle_scan_seen.add(key)
-            
-            closes = [c.close for c in candles[-50:]] if len(candles) >= 50 else [c.close for c in candles]
-            mn, mx = min(closes), max(closes)
-            rng = mx - mn if mx > mn else 1
-            normalized = [(v - mn) / rng for v in closes]
-            
-            pattern_time = candles[-1].close_time
-            pattern_candle_index = len(candles) - 1
-            
-            await broadcast_message({
-                "type": "match",
-                "data": {
-                    "match_id": None,
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "similarity_score": 100.0,
-                    "structure_type": pat.value,
-                    "timestamp": datetime.now().isoformat(),
-                    "is_mirrored": False,
-                    "normalized_line": normalized,
-                    "price_change_24h": scanner.price_change_24h.get(symbol, 0),
-                    "pattern_time": pattern_time,
-                    "candle_pattern_index": pattern_candle_index,
-                    "is_candle_pattern": True
-                }
-            })
+    positions = candle_detector.find_all_positions(candles, pattern_filter=search_candle_filter)
+    if positions:
+        key = f"{symbol}_{timeframe}"
+        if key in candle_scan_seen:
+            return
+        candle_scan_seen.add(key)
+        
+        closes = [c.close for c in candles[-50:]] if len(candles) >= 50 else [c.close for c in candles]
+        mn, mx = min(closes), max(closes)
+        rng = mx - mn if mx > mn else 1
+        normalized = [(v - mn) / rng for v in closes]
+        
+        last_pos = positions[-1]
+        pattern_time = candles[last_pos["index"]].close_time if last_pos["index"] < len(candles) else candles[-1].close_time
+        
+        await broadcast_message({
+            "type": "match",
+            "data": {
+                "match_id": None,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "similarity_score": 100.0,
+                "structure_type": search_candle_filter,
+                "timestamp": datetime.now().isoformat(),
+                "is_mirrored": False,
+                "normalized_line": normalized,
+                "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+                "pattern_time": pattern_time,
+                "is_candle_pattern": True,
+                "pattern_positions": [{"index": p["index"], "time": p["time"]} for p in positions],
+                "pattern_count": len(positions)
+            }
+        })
 
 
 async def run_initial_candle_scan():
@@ -294,40 +294,40 @@ async def run_initial_candle_scan():
             if not candles or len(candles) < 5:
                 continue
             
-            patterns = candle_detector.detect_all(candles)
-            for pat in patterns:
-                if pat.value == search_candle_filter:
-                    key = f"{symbol}_{timeframe}"
-                    if key in candle_scan_seen:
-                        continue
-                    candle_scan_seen.add(key)
-                    match_count += 1
-                    
-                    closes = [c.close for c in candles[-50:]] if len(candles) >= 50 else [c.close for c in candles]
-                    mn, mx = min(closes), max(closes)
-                    rng = mx - mn if mx > mn else 1
-                    normalized = [(v - mn) / rng for v in closes]
-                    
-                    pattern_time = candles[-1].close_time
-                    pattern_candle_index = len(candles) - 1
-                    
-                    await broadcast_message({
-                        "type": "match",
-                        "data": {
-                            "match_id": None,
-                            "symbol": symbol,
-                            "timeframe": timeframe,
-                            "similarity_score": 100.0,
-                            "structure_type": pat.value,
-                            "timestamp": datetime.now().isoformat(),
-                            "is_mirrored": False,
-                            "normalized_line": normalized,
-                            "price_change_24h": scanner.price_change_24h.get(symbol, 0),
-                            "pattern_time": pattern_time,
-                            "candle_pattern_index": pattern_candle_index,
-                            "is_candle_pattern": True
-                        }
-                    })
+            positions = candle_detector.find_all_positions(candles, pattern_filter=search_candle_filter)
+            if positions:
+                key = f"{symbol}_{timeframe}"
+                if key in candle_scan_seen:
+                    continue
+                candle_scan_seen.add(key)
+                match_count += 1
+                
+                closes = [c.close for c in candles[-50:]] if len(candles) >= 50 else [c.close for c in candles]
+                mn, mx = min(closes), max(closes)
+                rng = mx - mn if mx > mn else 1
+                normalized = [(v - mn) / rng for v in closes]
+                
+                last_pos = positions[-1]
+                pattern_time = candles[last_pos["index"]].close_time if last_pos["index"] < len(candles) else candles[-1].close_time
+                
+                await broadcast_message({
+                    "type": "match",
+                    "data": {
+                        "match_id": None,
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "similarity_score": 100.0,
+                        "structure_type": search_candle_filter,
+                        "timestamp": datetime.now().isoformat(),
+                        "is_mirrored": False,
+                        "normalized_line": normalized,
+                        "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+                        "pattern_time": pattern_time,
+                        "is_candle_pattern": True,
+                        "pattern_positions": [{"index": p["index"], "time": p["time"]} for p in positions],
+                        "pattern_count": len(positions)
+                    }
+                })
     
     await broadcast_message({
         "type": "initial_scan_complete",
@@ -1287,6 +1287,17 @@ async def get_candles_data(symbol: str, timeframe: str):
             "volume": c.volume
         })
     return {"candles": ohlc}
+
+
+@app.get("/api/candle-patterns/{symbol}/{timeframe}")
+async def get_candle_pattern_positions(symbol: str, timeframe: str, pattern: str = None):
+    """Get all candle pattern positions for a symbol/timeframe."""
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles or len(candles) < 3:
+        return {"patterns": []}
+    
+    positions = candle_detector.find_all_positions(candles, pattern_filter=pattern)
+    return {"patterns": positions}
 
 
 @app.get("/api/debug-structure/{symbol}/{timeframe}")

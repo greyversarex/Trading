@@ -152,6 +152,119 @@ class CandlePatternDetector:
 
         return found
 
+    def detect_at_position(self, candles, idx) -> List[CandlePatternType]:
+        if idx < 2 or idx >= len(candles):
+            return []
+
+        found = []
+        last = candles[idx]
+        prev = candles[idx - 1]
+        prev2 = candles[idx - 2]
+
+        o, h, l, c = last.open, last.high, last.low, last.close
+        po, ph, pl, pc = prev.open, prev.high, prev.low, prev.close
+        p2o, p2h, p2l, p2c = prev2.open, prev2.high, prev2.low, prev2.close
+
+        rng = self._range(h, l)
+        body = self._body(o, c)
+        upper = self._upper_shadow(o, h, c)
+        lower = self._lower_shadow(o, l, c)
+
+        p_rng = self._range(ph, pl)
+        p_body = self._body(po, pc)
+
+        if rng == 0:
+            return found
+
+        body_ratio = body / rng
+
+        if self._detect_doji(body_ratio, rng):
+            found.append(CandlePatternType.DOJI)
+        if self._detect_hammer(body_ratio, lower, upper, body, rng, o, c):
+            found.append(CandlePatternType.HAMMER)
+        if self._detect_inverted_hammer(body_ratio, lower, upper, body, rng, o, c):
+            found.append(CandlePatternType.INVERTED_HAMMER)
+        if self._detect_shooting_star(body_ratio, lower, upper, body, rng, o, c):
+            found.append(CandlePatternType.SHOOTING_STAR)
+        if self._detect_spinning_top(body_ratio, upper, lower, rng):
+            found.append(CandlePatternType.SPINNING_TOP)
+        if self._detect_marubozu_bull(body_ratio, o, c, upper, lower, rng):
+            found.append(CandlePatternType.MARUBOZU_BULL)
+        if self._detect_marubozu_bear(body_ratio, o, c, upper, lower, rng):
+            found.append(CandlePatternType.MARUBOZU_BEAR)
+
+        if p_rng > 0:
+            if self._detect_engulfing_bull(o, c, po, pc, p_body, body):
+                found.append(CandlePatternType.ENGULFING_BULL)
+            if self._detect_engulfing_bear(o, c, po, pc, p_body, body):
+                found.append(CandlePatternType.ENGULFING_BEAR)
+            if self._detect_harami_bull(o, c, po, pc, p_body, body):
+                found.append(CandlePatternType.HARAMI_BULL)
+            if self._detect_harami_bear(o, c, po, pc, p_body, body):
+                found.append(CandlePatternType.HARAMI_BEAR)
+            if self._detect_piercing_line(o, c, po, pc, ph, pl):
+                found.append(CandlePatternType.PIERCING_LINE)
+            if self._detect_dark_cloud(o, c, po, pc, ph, pl):
+                found.append(CandlePatternType.DARK_CLOUD)
+            if self._detect_tweezer_top(h, ph, rng, p_rng, o, c, po, pc):
+                found.append(CandlePatternType.TWEEZER_TOP)
+            if self._detect_tweezer_bottom(l, pl, rng, p_rng, o, c, po, pc):
+                found.append(CandlePatternType.TWEEZER_BOTTOM)
+
+        if idx >= 2 and p_rng > 0:
+            p2_rng = self._range(p2h, p2l)
+            if p2_rng > 0:
+                if self._detect_morning_star(p2o, p2c, po, pc, o, c, p2h, p2l, ph, pl):
+                    found.append(CandlePatternType.MORNING_STAR)
+                if self._detect_evening_star(p2o, p2c, po, pc, o, c, p2h, p2l, ph, pl):
+                    found.append(CandlePatternType.EVENING_STAR)
+
+        if idx >= 2:
+            sub = [candles[idx-2], candles[idx-1], candles[idx]]
+            if self._detect_three_white_soldiers(sub):
+                found.append(CandlePatternType.THREE_WHITE_SOLDIERS)
+            if self._detect_three_black_crows(sub):
+                found.append(CandlePatternType.THREE_BLACK_CROWS)
+
+        return found
+
+    def find_all_positions(self, candles, pattern_filter: str = None) -> List[dict]:
+        if not candles or len(candles) < 3:
+            return []
+
+        bullish_patterns = {
+            'hammer', 'inverted_hammer', 'bullish_engulfing', 'morning_star',
+            'three_white_soldiers', 'bullish_harami', 'tweezer_bottom',
+            'piercing_line', 'dragonfly_doji',
+        }
+        bearish_patterns = {
+            'shooting_star', 'hanging_man', 'bearish_engulfing', 'evening_star',
+            'three_black_crows', 'bearish_harami', 'tweezer_top',
+            'dark_cloud_cover', 'gravestone_doji',
+        }
+
+        results = []
+        for idx in range(2, len(candles)):
+            patterns = self.detect_at_position(candles, idx)
+            for pat in patterns:
+                if pattern_filter and pat.value != pattern_filter:
+                    continue
+                candle = candles[idx]
+                if pat.value in bullish_patterns:
+                    is_bull = True
+                elif pat.value in bearish_patterns:
+                    is_bull = False
+                else:
+                    is_bull = candle.close >= candle.open
+                results.append({
+                    "pattern": pat.value,
+                    "index": idx,
+                    "time": candle.open_time // 1000 if hasattr(candle, 'open_time') else idx,
+                    "price": candle.high if not is_bull else candle.low,
+                    "is_bullish": is_bull,
+                })
+        return results
+
     def _detect_doji(self, body_ratio, rng):
         return body_ratio < 0.1 and rng > 0
 
