@@ -271,6 +271,15 @@ class CandlePatternDetector:
                 if pattern_filter and pat.value != pattern_filter:
                     continue
                 candle = candles[idx]
+                vol_conf = 1.0
+                if hasattr(candle, 'volume') and candle.volume > 0:
+                    lookback_start = max(0, idx - 20)
+                    recent_vols = [c.volume for c in candles[lookback_start:idx] if hasattr(c, 'volume') and c.volume > 0]
+                    if recent_vols:
+                        avg_vol = sum(recent_vols) / len(recent_vols)
+                        if avg_vol > 0:
+                            vol_ratio = candle.volume / avg_vol
+                            vol_conf = min(1.5, max(0.5, vol_ratio))
                 if pat.value in bullish_patterns:
                     trend, strength = self._detect_preceding_trend(candles, idx)
                     if trend != 'down' and trend != 'neutral':
@@ -283,12 +292,15 @@ class CandlePatternDetector:
                     is_bull = False
                 else:
                     is_bull = candle.close >= candle.open
+                if vol_conf < 0.6 and pat.value not in {'doji', 'spinning_top'}:
+                    continue
                 results.append({
                     "pattern": pat.value,
                     "index": idx,
                     "time": candle.open_time // 1000 if hasattr(candle, 'open_time') else idx,
                     "price": candle.high if not is_bull else candle.low,
                     "is_bullish": is_bull,
+                    "volume_confirmation": round(vol_conf, 2),
                 })
         return results
 

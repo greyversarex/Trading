@@ -83,6 +83,7 @@ class StructureFeatures:
     detected_patterns: Dict[str, float] = field(default_factory=dict)
     is_pattern_active: bool = True
     pattern_freshness: float = 1.0
+    volume_confirmation: float = 0.5
 
 
 class StructureExtractor:
@@ -174,8 +175,11 @@ class StructureExtractor:
         if len(zigzag_pivots) >= 3:
             pivots = list(zigzag_pivots)
             min_dist = max(3, len(line) // 25)
+            price_range = np.max(line) - np.min(line)
+            diff_noise = np.std(np.diff(line)) / (price_range + 1e-10) if price_range > 0 else 0
+            prominence_threshold = max(0.08, min(0.25, 0.12 + diff_noise * 2.0))
             for mp in multi_scale_pivots:
-                if mp.prominence > 0.15:
+                if mp.prominence > prominence_threshold:
                     too_close = False
                     for zp in pivots:
                         if abs(mp.index - zp.index) < min_dist:
@@ -209,7 +213,10 @@ class StructureExtractor:
             rolling_sum = np.convolve(abs_diffs, np.ones(window), mode='valid')
             atr = np.mean(rolling_sum / window)
         
-        min_swing = max(atr * 2.0, 0.02)
+        diff_std = np.std(abs_diffs) if len(abs_diffs) > 1 else 0
+        noise_ratio = diff_std / (atr + 1e-10)
+        atr_mult = min(3.5, max(1.5, 1.5 + noise_ratio * 0.8))
+        min_swing = max(atr * atr_mult, 0.02)
         min_spacing = max(3, n // 20)
         
         pivots = []
@@ -747,6 +754,17 @@ class StructureExtractor:
                     neckline_lows = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[i+2].index]
                     neckline_bonus = 0.2 if len(neckline_lows) >= 2 else 0.0
                     conf = (1.0 - shoulder_diff / 0.18) * 0.3 + min(1.0, head_prominence / 0.15) * 0.4 + neckline_bonus + 0.1
+                    shoulder_avg = (left + right) / 2
+                    shoulder_head_ratio = shoulder_avg / head if head > 0 else 0
+                    if shoulder_head_ratio < 0.4 or shoulder_head_ratio > 0.95:
+                        conf *= 0.6
+                    time_span = highs[i + 2].index - highs[i].index
+                    left_span = highs[i + 1].index - highs[i].index
+                    right_span = highs[i + 2].index - highs[i + 1].index
+                    if time_span > 0:
+                        symmetry_ratio = min(left_span, right_span) / max(left_span, right_span) if max(left_span, right_span) > 0 else 0
+                        if symmetry_ratio < 0.3:
+                            conf *= 0.7
                     if conf > best_conf:
                         best_conf = conf
                         if neckline_lows:
@@ -786,6 +804,22 @@ class StructureExtractor:
                     neckline_highs = [p for p in pivots if p.is_high and lows[i].index < p.index < lows[i+2].index]
                     neckline_bonus = 0.2 if len(neckline_highs) >= 2 else 0.0
                     conf = (1.0 - shoulder_diff / 0.18) * 0.3 + min(1.0, head_prominence / 0.15) * 0.4 + neckline_bonus + 0.1
+                    shoulder_avg = (left + right) / 2
+                    if neckline_highs:
+                        neckline_val = np.mean([p.value for p in neckline_highs])
+                        head_depth = neckline_val - head
+                        shoulder_depth = neckline_val - shoulder_avg
+                        if head_depth > 0:
+                            depth_ratio = shoulder_depth / head_depth
+                            if depth_ratio < 0.15 or depth_ratio > 0.85:
+                                conf *= 0.6
+                    time_span = lows[i + 2].index - lows[i].index
+                    left_span = lows[i + 1].index - lows[i].index
+                    right_span = lows[i + 2].index - lows[i + 1].index
+                    if time_span > 0:
+                        symmetry_ratio = min(left_span, right_span) / max(left_span, right_span) if max(left_span, right_span) > 0 else 0
+                        if symmetry_ratio < 0.3:
+                            conf *= 0.7
                     if conf > best_conf:
                         best_conf = conf
                         if neckline_highs:
@@ -850,6 +884,11 @@ class StructureExtractor:
         
         if best_conf <= 0.5:
             return False, "", 0.0, True
+        flag_range = best_flag_high - best_flag_low
+        if flag_range > 0:
+            pole_range = price_range - flag_range
+            if pole_range < flag_range * 1.5:
+                best_conf *= 0.7
         is_active = True
         tail = line[int(n * 0.85):]
         if len(tail) > 2:
@@ -883,7 +922,7 @@ class StructureExtractor:
         if not (both_up or both_down):
             return False, "", 0.0, True
 
-        first_idx = min(pivots[0].index, 0)
+        first_idx = pivots[0].index
         last_idx = max(pivots[-1].index, n - 1)
         spread_start = (h_int + h_slope_raw * first_idx) - (l_int + l_slope_raw * first_idx)
         spread_end = (h_int + h_slope_raw * last_idx) - (l_int + l_slope_raw * last_idx)
@@ -1028,7 +1067,7 @@ class StructureExtractor:
         if not (converging or descending or ascending):
             return False, 0.0, True
 
-        first_idx = min(pivots[0].index, 0)
+        first_idx = pivots[0].index
         last_idx = max(pivots[-1].index, n - 1)
 
         spread_start = (h_intercept + h_slope * first_idx) - (l_intercept + l_slope * first_idx)
@@ -1040,9 +1079,17 @@ class StructureExtractor:
         convergence_ratio = 1.0 - (spread_end / spread_start) if spread_start > 0 else 0
         if convergence_ratio < 0.15:
             return False, 0.0, True
+        if convergence_ratio > 0.95:
+            return False, 0.0, True
 
         if spread_end < 0:
             return False, 0.0, True
+
+        pattern_span = last_idx - first_idx
+        if pattern_span > 0:
+            norm_conv_rate = convergence_ratio / (pattern_span / n) if n > 0 else 0
+            if norm_conv_rate > 3.0:
+                return False, 0.0, True
 
         h_residuals = np.abs(h_values - (h_intercept + h_slope * h_indices))
         l_residuals = np.abs(l_values - (l_intercept + l_slope * l_indices))
@@ -1240,6 +1287,37 @@ class StructureExtractor:
         strength = min(1.0, end_move * 0.3 + min(3.0, volatility_expansion) / 3.0 * 0.3 + range_break * 0.4)
         return float(strength)
 
+    def calculate_volume_confirmation(self, volumes: np.ndarray, pivots: List[PivotPoint], 
+                                      line: np.ndarray) -> float:
+        if volumes is None or len(volumes) < 10:
+            return 0.5
+        avg_vol = np.mean(volumes)
+        if avg_vol == 0:
+            return 0.5
+        n = len(volumes)
+        line_len = len(line)
+        pivot_vols = []
+        for p in pivots:
+            if line_len > 0 and n != line_len:
+                mapped_idx = int(p.index * (n - 1) / max(1, line_len - 1))
+            else:
+                mapped_idx = p.index
+            mapped_idx = min(max(0, mapped_idx), n - 1)
+            pivot_vols.append(volumes[mapped_idx])
+        pivot_vol_ratio = np.mean(pivot_vols) / avg_vol if pivot_vols else 1.0
+        first_half_vol = np.mean(volumes[:n//2])
+        second_half_vol = np.mean(volumes[n//2:])
+        vol_trend = second_half_vol / first_half_vol if first_half_vol > 0 else 1.0
+        tail_start = int(n * 0.85)
+        tail_vol = np.mean(volumes[tail_start:]) if tail_start < n else avg_vol
+        tail_ratio = tail_vol / avg_vol
+        score = (
+            min(1.5, pivot_vol_ratio) / 1.5 * 0.3 +
+            min(1.5, vol_trend) / 1.5 * 0.3 +
+            min(2.0, tail_ratio) / 2.0 * 0.4
+        )
+        return float(min(1.0, score))
+
     def calculate_trend_consistency(self, pivots: List[PivotPoint], line: np.ndarray) -> float:
         if len(pivots) < 3:
             return 0.0
@@ -1422,7 +1500,7 @@ class StructureExtractor:
         
         return feature_vector
     
-    def extract_features(self, line: np.ndarray) -> Optional[StructureFeatures]:
+    def extract_features(self, line: np.ndarray, volumes: np.ndarray = None) -> Optional[StructureFeatures]:
         if len(line) < 10:
             return None
         
@@ -1452,6 +1530,11 @@ class StructureExtractor:
         trend_consist = self.calculate_trend_consistency(pivots, normalized_line)
         avg_conf = float(np.mean([p.confidence for p in pivots])) if pivots else 0.0
         
+        vol_conf = 0.5
+        if volumes is not None and len(volumes) >= 10:
+            norm_volumes = np.array(volumes[-len(normalized_line):]) if len(volumes) > len(normalized_line) else np.array(volumes)
+            vol_conf = self.calculate_volume_confirmation(norm_volumes, pivots, normalized_line)
+        
         feature_vector = self.create_feature_vector(
             normalized_line, pivot_sequence, relative_distances,
             trend, volatility, compression
@@ -1478,12 +1561,14 @@ class StructureExtractor:
             trend_consistency=trend_consist,
             detected_patterns=detected_patterns,
             is_pattern_active=is_active,
-            pattern_freshness=freshness
+            pattern_freshness=freshness,
+            volume_confirmation=vol_conf
         )
     
-    def extract_from_candles(self, closes: List[float]) -> Optional[StructureFeatures]:
+    def extract_from_candles(self, closes: List[float], volumes: List[float] = None) -> Optional[StructureFeatures]:
         line = np.array(closes)
-        return self.extract_features(line)
+        vol_arr = np.array(volumes) if volumes else None
+        return self.extract_features(line, vol_arr)
     
     def features_from_dict(self, data: dict) -> StructureFeatures:
         pivot_points = []
@@ -1536,5 +1621,6 @@ class StructureExtractor:
             trend_consistency=data.get("trend_consistency", 0.0),
             detected_patterns=data.get("detected_patterns", {}),
             is_pattern_active=data.get("is_pattern_active", True),
-            pattern_freshness=data.get("pattern_freshness", 1.0)
+            pattern_freshness=data.get("pattern_freshness", 1.0),
+            volume_confirmation=data.get("volume_confirmation", 0.5)
         )

@@ -132,7 +132,8 @@ class SimilarityMatcher:
             trend_consistency=features.trend_consistency,
             detected_patterns=mirrored_patterns,
             is_pattern_active=features.is_pattern_active,
-            pattern_freshness=features.pattern_freshness
+            pattern_freshness=features.pattern_freshness,
+            volume_confirmation=features.volume_confirmation
         )
 
     def _dtw_distance(self, s1: np.ndarray, s2: np.ndarray, window: int = 10) -> float:
@@ -465,6 +466,12 @@ class SimilarityMatcher:
         if cand_freshness < 0.5:
             score *= 0.6 + cand_freshness * 0.8
 
+        cand_vol = getattr(cand, 'volume_confirmation', 0.5)
+        if cand_vol > 0.7:
+            score *= 1.0 + (cand_vol - 0.7) * 0.3
+        elif cand_vol < 0.3:
+            score *= 0.85
+
         return min(1.0, score)
 
     def find_matches(self, reference: StructureFeatures,
@@ -500,7 +507,25 @@ class SimilarityMatcher:
                 ))
 
         matches = self._deduplicate_matches(raw_matches)
+        matches = self._apply_mtf_bonus(matches)
         matches.sort(key=lambda x: x.similarity_score, reverse=True)
+        return matches
+
+    def _apply_mtf_bonus(self, matches: List[MatchResult]) -> List[MatchResult]:
+        symbol_tfs = {}
+        for m in matches:
+            base_tf = m.timeframe.split("_w")[0] if "_w" in m.timeframe else m.timeframe
+            if m.symbol not in symbol_tfs:
+                symbol_tfs[m.symbol] = set()
+            symbol_tfs[m.symbol].add(base_tf)
+        for m in matches:
+            base_tf = m.timeframe.split("_w")[0] if "_w" in m.timeframe else m.timeframe
+            tf_count = len(symbol_tfs.get(m.symbol, set()))
+            if tf_count >= 3:
+                m.similarity_score = min(99.99, m.similarity_score * 1.08)
+            elif tf_count >= 2:
+                m.similarity_score = min(99.99, m.similarity_score * 1.04)
+            m.similarity_score = round(m.similarity_score, 2)
         return matches
 
     def _deduplicate_matches(self, matches: List[MatchResult]) -> List[MatchResult]:

@@ -209,7 +209,26 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
             type_scan_seen.add(key)
             
             conf = detected.get(search_type_filter, features.pattern_confidence) if secondary_match else features.pattern_confidence
+            vol_conf = getattr(features, 'volume_confirmation', 0.5)
+            if vol_conf > 0.7:
+                conf = min(1.0, conf * (1.0 + (vol_conf - 0.7) * 0.3))
+            elif vol_conf < 0.3:
+                conf *= 0.85
             score = round(conf * 100, 1) if not primary_match else 100.0
+            
+            all_sym_tfs = set()
+            for s_sym, s_tf, s_feat, s_ts, s_ct in structures:
+                if s_sym == sym and s_feat is not None:
+                    s_det = getattr(s_feat, 'detected_patterns', {}) or {}
+                    if s_feat.structure_type.value == search_type_filter or search_type_filter in s_det:
+                        s_base = s_tf.split("_w")[0] if "_w" in s_tf else s_tf
+                        all_sym_tfs.add(s_base)
+            mtf_count = len(all_sym_tfs)
+            if mtf_count >= 3:
+                score = min(100.0, score * 1.08)
+            elif mtf_count >= 2:
+                score = min(100.0, score * 1.04)
+            score = round(score, 1)
             
             await broadcast_message({
                 "type": "match",
@@ -224,7 +243,9 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
                     "normalized_line": features.normalized_line.tolist(),
                     "price_change_24h": scanner.price_change_24h.get(sym, 0),
                     "pattern_time": candle_time,
-                    "detected_patterns": detected
+                    "detected_patterns": detected,
+                    "volume_confirmation": round(vol_conf, 2),
+                    "mtf_confirmed": mtf_count >= 2
                 }
             })
 

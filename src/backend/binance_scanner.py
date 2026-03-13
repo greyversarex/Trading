@@ -469,6 +469,7 @@ class BinanceScanner:
             return False
         
         closes = [c.close for c in candles]
+        volumes = [c.volume for c in candles]
 
         cache_key = f"{symbol}_{timeframe}"
         new_hash = self._candle_hash(closes)
@@ -476,7 +477,7 @@ class BinanceScanner:
             return False
         self._candle_hashes[cache_key] = new_hash
 
-        features = self.structure_extractor.extract_from_candles(closes)
+        features = self.structure_extractor.extract_from_candles(closes, volumes)
         
         old_features = self.symbol_data[symbol].structures.get(timeframe)
         self.symbol_data[symbol].structures[timeframe] = features
@@ -485,7 +486,8 @@ class BinanceScanner:
             win_key = f"{timeframe}_w{win_size}"
             if len(closes) >= win_size:
                 win_closes = closes[-win_size:]
-                win_features = self.structure_extractor.extract_from_candles(win_closes)
+                win_volumes = volumes[-win_size:]
+                win_features = self.structure_extractor.extract_from_candles(win_closes, win_volumes)
                 self.symbol_data[symbol].structures[win_key] = win_features
             else:
                 self.symbol_data[symbol].structures[win_key] = None
