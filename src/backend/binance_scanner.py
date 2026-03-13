@@ -67,7 +67,7 @@ class BinanceScanner:
     last_error: str = None
     
     def __init__(self, num_symbols: int = 50):
-        self.num_symbols = min(num_symbols, 30)
+        self.num_symbols = min(num_symbols, 50)
         self.symbols: List[str] = []
         self.symbol_data: Dict[str, SymbolData] = {}
         self.structure_extractor = StructureExtractor()

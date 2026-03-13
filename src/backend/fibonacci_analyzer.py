@@ -12,6 +12,9 @@ class FiboLevel(str, Enum):
     LEVEL_618 = "61.8"
     LEVEL_786 = "78.6"
     LEVEL_1000 = "100.0"
+    LEVEL_1272 = "127.2"
+    LEVEL_1618 = "161.8"
+    LEVEL_2618 = "261.8"
 
 
 FIBO_RATIOS = {
@@ -22,6 +25,9 @@ FIBO_RATIOS = {
     FiboLevel.LEVEL_618: 0.618,
     FiboLevel.LEVEL_786: 0.786,
     FiboLevel.LEVEL_1000: 1.0,
+    FiboLevel.LEVEL_1272: 1.272,
+    FiboLevel.LEVEL_1618: 1.618,
+    FiboLevel.LEVEL_2618: 2.618,
 }
 
 FIBO_NAMES = {
@@ -32,6 +38,9 @@ FIBO_NAMES = {
     FiboLevel.LEVEL_618: "61.8%",
     FiboLevel.LEVEL_786: "78.6%",
     FiboLevel.LEVEL_1000: "100%",
+    FiboLevel.LEVEL_1272: "127.2%",
+    FiboLevel.LEVEL_1618: "161.8%",
+    FiboLevel.LEVEL_2618: "261.8%",
 }
 
 
@@ -151,10 +160,16 @@ class FibonacciAnalyzer:
         diff = swing_high - swing_low
 
         for level, ratio in FIBO_RATIOS.items():
-            if is_uptrend:
-                price = swing_high - diff * ratio
+            if ratio <= 1.0:
+                if is_uptrend:
+                    price = swing_high - diff * ratio
+                else:
+                    price = swing_low + diff * ratio
             else:
-                price = swing_low + diff * ratio
+                if is_uptrend:
+                    price = swing_low + diff * ratio
+                else:
+                    price = swing_high - diff * ratio
             levels[FIBO_NAMES[level]] = round(price, 8)
 
         return levels
@@ -162,7 +177,7 @@ class FibonacciAnalyzer:
     def detect_touches(self, closes: List[float], highs: List[float], lows: List[float],
                        levels: Dict[str, float], start_idx: int = 0) -> List[FiboTouch]:
         touches = []
-        key_levels = ["23.6%", "38.2%", "50%", "61.8%", "78.6%"]
+        key_levels = ["23.6%", "38.2%", "50%", "61.8%", "78.6%", "127.2%", "161.8%", "261.8%"]
 
         for level_name in key_levels:
             if level_name not in levels:

@@ -130,7 +130,9 @@ class SimilarityMatcher:
             breakout_strength=features.breakout_strength,
             avg_pivot_confidence=features.avg_pivot_confidence,
             trend_consistency=features.trend_consistency,
-            detected_patterns=mirrored_patterns
+            detected_patterns=mirrored_patterns,
+            is_pattern_active=features.is_pattern_active,
+            pattern_freshness=features.pattern_freshness
         )
 
     def _dtw_distance(self, s1: np.ndarray, s2: np.ndarray, window: int = 10) -> float:
@@ -459,6 +461,10 @@ class SimilarityMatcher:
         elif avg_piv_conf < 0.3:
             score *= 0.92
 
+        cand_freshness = getattr(cand, 'pattern_freshness', 1.0)
+        if cand_freshness < 0.5:
+            score *= 0.6 + cand_freshness * 0.8
+
         return min(1.0, score)
 
     def find_matches(self, reference: StructureFeatures,
@@ -474,6 +480,9 @@ class SimilarityMatcher:
                 continue
 
             if hasattr(features, 'quality_score') and features.quality_score < 0.2:
+                continue
+
+            if hasattr(features, 'is_pattern_active') and not features.is_pattern_active:
                 continue
 
             score, is_mirrored = self.calculate_similarity(reference, features)

@@ -1359,7 +1359,7 @@ async def get_debug_structure(symbol: str, timeframe: str):
         if len(raw_pivots) > 0:
             trend = structure_extractor.calculate_trend(normalized)
             compression = structure_extractor.calculate_compression(normalized, raw_pivots)
-            st, pc = structure_extractor.classify_structure(trend, compression, raw_pivots, normalized)
+            st, pc, _, is_active, freshness = structure_extractor.classify_structure(trend, compression, raw_pivots, normalized)
             structure_type = st.value
             pattern_confidence = round(pc * 100, 1)
 

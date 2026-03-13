@@ -228,31 +228,58 @@ class CandlePatternDetector:
 
         return found
 
-    def find_all_positions(self, candles, pattern_filter: str = None) -> List[dict]:
+    BULLISH_REVERSAL = {
+        'hammer', 'inverted_hammer', 'engulfing_bull', 'morning_star',
+        'harami_bull', 'tweezer_bottom', 'piercing_line', 'three_white_soldiers',
+    }
+    BEARISH_REVERSAL = {
+        'shooting_star', 'engulfing_bear', 'evening_star',
+        'three_black_crows', 'harami_bear', 'tweezer_top', 'dark_cloud',
+    }
+
+    def _detect_preceding_trend(self, candles, idx, lookback=5):
+        if idx < lookback:
+            return 'neutral', 0.0
+        preceding = candles[max(0, idx - lookback):idx]
+        if len(preceding) < 3:
+            return 'neutral', 0.0
+        closes = [c.close for c in preceding]
+        up_count = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
+        down_count = sum(1 for i in range(1, len(closes)) if closes[i] < closes[i-1])
+        total = len(closes) - 1
+        if total == 0:
+            return 'neutral', 0.0
+        move_pct = (closes[-1] - closes[0]) / closes[0] if closes[0] != 0 else 0
+        if up_count > total * 0.6 and move_pct > 0:
+            return 'up', min(1.0, abs(move_pct) * 20 + up_count / total)
+        elif down_count > total * 0.6 and move_pct < 0:
+            return 'down', min(1.0, abs(move_pct) * 20 + down_count / total)
+        return 'neutral', 0.0
+
+    def find_all_positions(self, candles, pattern_filter: str = None, max_age: int = 10) -> List[dict]:
         if not candles or len(candles) < 3:
             return []
 
-        bullish_patterns = {
-            'hammer', 'inverted_hammer', 'engulfing_bull', 'morning_star',
-            'three_white_soldiers', 'harami_bull', 'tweezer_bottom',
-            'piercing_line',
-        }
-        bearish_patterns = {
-            'shooting_star', 'engulfing_bear', 'evening_star',
-            'three_black_crows', 'harami_bear', 'tweezer_top',
-            'dark_cloud',
-        }
+        bullish_patterns = self.BULLISH_REVERSAL
+        bearish_patterns = self.BEARISH_REVERSAL
 
         results = []
-        for idx in range(2, len(candles)):
+        start_idx = max(2, len(candles) - max_age)
+        for idx in range(start_idx, len(candles)):
             patterns = self.detect_at_position(candles, idx)
             for pat in patterns:
                 if pattern_filter and pat.value != pattern_filter:
                     continue
                 candle = candles[idx]
                 if pat.value in bullish_patterns:
+                    trend, strength = self._detect_preceding_trend(candles, idx)
+                    if trend != 'down' and trend != 'neutral':
+                        continue
                     is_bull = True
                 elif pat.value in bearish_patterns:
+                    trend, strength = self._detect_preceding_trend(candles, idx)
+                    if trend != 'up' and trend != 'neutral':
+                        continue
                     is_bull = False
                 else:
                     is_bull = candle.close >= candle.open
