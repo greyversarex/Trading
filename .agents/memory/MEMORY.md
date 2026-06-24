@@ -1,4 +1,2 @@
-# Memory Index
-
-- [Causal pivot mapping](causal-pivot-mapping.md) — raw-price pattern detection must detect pivots on the normalized line, then snap to nearest raw extremum; detect_pivots underdetects on raw closes.
-- [Scanner symbol keys](scanner-symbol-keys.md) — scanner.symbol_data / get_candles key on BASE symbol ("BTC"), not pair ("BTCUSDT"); pass base to any candle-reading endpoint/scan.
+- [Pattern detector design](pattern-detectors.md) — how new causal pattern detectors plug into extract_features_causal via priority builders + same confirmation machinery.
+- [ML relevance filter](ml-relevance-filter.md) — ml_score gate must be applied identically on every scan path (live + initial burst); filter cuts FPs only, recall is bounded by detectors.

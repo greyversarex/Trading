@@ -314,3 +314,182 @@
 - Приложение перезапускается чисто; режим `causal_patterns` транслирует только
   подтверждённые паттерны (в живом прогоне — 3 совпадения против 370 в
   similarity-режиме, что ожидаемо для строгой неперерисовывающей детекции).
+
+---
+
+# Phase 2 — Недостающие паттерны, синтетика и ML-фильтр
+
+## Sub-phase 2.1 — Генератор синтетических паттернов
+
+**Новое**
+- `src/backend/synthetic.py` — класс `SyntheticChartGenerator`:
+  - `generate_random_walk(n, start_price, volatility, seed)` — случайное
+    блуждание с согласованным OHLCV на базе `CandleData`.
+  - Инъекторы форм: `inject_triple_top`, `inject_triple_bottom`,
+    `inject_cup_and_handle`, `inject_pennant`, `inject_rounding_bottom`.
+    Каждая форма строится как кусочно-гладкая кривая цен закрытия с шумом и
+    завершается пробоем (для каузального подтверждения в 2.2).
+  - `generate_labeled_dataset(n_per_class, n_noise, seed)` — список образцов
+    `{candles, label, target_confirmed}`; шум помечается `target_confirmed=False`.
+- `scripts/generate_synthetic.py` — CLI, сохраняет `data/synthetic_dataset.json`.
+- `tests/test_synthetic.py` — 12 тестов: длина рядов, согласованность OHLC,
+  узнаваемость форм (три вершины <2% и разнесены; U-образность чаши; минимум
+  округлого дна в середине), санити-проверка шума, структура датасета.
+
+**Проверка**
+- `python -m pytest tests/test_synthetic.py -v` → 12 passed.
+- `python scripts/generate_synthetic.py` → датасет сохранён (классы
+  сбалансированы, шум помечен корректно).
+
+## Sub-phase 2.2 — Детекторы недостающих паттернов
+
+**Новое**
+- Пять новых типов `StructureType`: `triple_top`, `triple_bottom`,
+  `cup_and_handle`, `pennant`, `rounding_bottom` (строковые значения стабильны —
+  контракт REST/WS не нарушен, добавлены только новые поля/значения).
+- `config.py` (`PatternConfig`) — пороги: `triple_top/bottom_tolerance`+`min_conf`,
+  `cup_and_handle_depth_min`/`handle_retrace_max`/`min_conf`,
+  `pennant_pole_min_move`/`convergence_min`/`min_conf`,
+  `rounding_bottom_curvature_min`/`min_conf`.
+- `structure_extractor.py` — каузальные построители кандидатов
+  `_candidate_triple_top/triple_bottom/cup_and_handle/pennant/rounding_bottom`,
+  возвращающие `_PatternCandidate` и подтверждаемые той же машиной
+  `_confirm_candidate` (семейства `breakout_level`/`breakout_channel`).
+  Зарегистрированы в диспетчере `_build_candidate`.
+  - Особенности детекции: вымпел измеряет схождение по сжатию амплитуды
+    пост-полюсной зоны (мало пивотов в затухающих колебаниях); округлое дно
+    требует центрального глобального минимума, выпуклой параболы и того, чтобы
+    парабола объясняла форму существенно лучше прямой (отсечение каналов).
+- `extract_features_causal` — ПРИОРИТЕТНАЯ логика: сначала пробуются пять новых
+  типов; первый ПОДТВЕРЖДЁННЫЙ выигрывает; иначе откат к кандидату по базовому
+  типу. Поведение Phase 1 полностью сохранено (новые билдеры дают `None` на
+  формах double/channel/триангл и т.п.).
+- `classify_structure` (режим type_scan) — `_detect_missing_patterns_norm`
+  переиспользует те же геометрические билдеры в нормализованном пространстве и
+  дополняет мульти-лейбл `detected_patterns`, не меняя первичную классификацию.
+- `similarity_matcher.py` — новые типы добавлены в `REVERSAL_TYPES`/
+  `CONSOLIDATION_TYPES`, `OPPOSITE_PAIRS` (triple_top↔triple_bottom),
+  `type_mirror_map` (тройные — зеркальны, чаша/вымпел/дно — само-зеркальны),
+  `MIN_CONFIDENCE_THRESHOLDS`.
+- `main.py` — изменений не требует: диспетчеризация идёт по строковым значениям
+  типов и `detected_patterns`, новые типы проходят автоматически.
+- `tests/test_missing_patterns.py` — 34 теста: каузальная детекция и
+  подтверждение, отсутствие перерисовки, мульти-лейбл в type_scan, регистрация в
+  матчере, низкий уровень ложных срабатываний на шуме, стабильность enum.
+
+**Проверка**
+- `python -m pytest -q` → 85 passed (51 прежних без регрессий + 34 новых).
+- Перезапуск воркфлоу `Chart Scanner` → чистый старт на порту 5000, REST/WS
+  отвечают `200 OK`.
+
+## Sub-phase 2.3 — Извлечение ML-признаков и классификатор
+
+**Новое**
+- Пакет `src/backend/ml/`:
+  - `features.py` — `extract_ml_features(structure_features, candidate_index,
+    confirmation_index, candle_history, timeframe_minutes)` -> dict признаков.
+    Фиксированный `FEATURE_ORDER` (16 числовых + one-hot по всем `StructureType`):
+    pattern_confidence, quality_score, symmetry_score, convergence_rate,
+    breakout_strength, avg_pivot_confidence, trend_consistency,
+    volume_confirmation, pattern_freshness, is_confirmed, timeframe_minutes,
+    n_pivots, volatility_scale, price_range, relative_volume, lag_to_confirmation.
+    `features_to_vector` гарантирует совпадение порядка обучение↔инференс.
+  - `model.py` — `RelevanceClassifier` (обёртка `RandomForestClassifier`,
+    `class_weight="balanced"`): `fit/predict_proba/predict_one/save/load`,
+    `feature_importances`. Сохранение через joblib вместе с порядком признаков и
+    метаданными (trained_at, n_samples, accuracy). При отсутствии scikit-learn —
+    понятная ошибка `ImportError`.
+  - `trainer.py` — `ModelTrainer.build_training_data(synthetic, feedback=None)`:
+    каждый образец прогоняется через `extract_features_causal`; метка `1`, если
+    паттерн-класс ПОДТВЕРЖДЁН и тип совпал с заявленным, иначе `0` (шум/ложное
+    срабатывание/не подтверждено). Обратная связь подмешивается с весом
+    `ml_feedback_weight` только при наличии восстановимых признаков (без
+    выдумывания данных). `train()` возвращает accuracy/report/importances;
+    `retrain()` пересобирает и перезаписывает модель.
+  - `pipeline.py` — `MLPipeline`: мягкая загрузка модели; `score_features(...)`
+    возвращает `ml_score`; при отсутствии модели — `1.0` (бэквард-совместимость);
+    `status()` для будущего `/api/ml-status`.
+- `config.py` — `MLConfig` на `AppConfig` (`CONFIG.ml`): `ml_min_training_samples=200`,
+  `ml_feedback_weight=1.0`, `ml_retrain_interval_hours=24`, `ml_score_threshold=0.5`,
+  `ml_model_path`.
+- `database.py` — `get_all_feedback()` (feedback ⋈ matches) для CLI-обучения.
+- `scripts/train_ml.py` — загрузка датасета + обратной связи, обучение, печать
+  метрик и важностей, сохранение в `data/ml_relevance_model.pkl`.
+- `tests/test_ml_filter.py` — 11 тестов: извлечение признаков, стабильность
+  порядка, one-hot, наличие обоих классов, точность > 0.7, save/load roundtrip,
+  диапазон predict_proba, мягкое поведение pipeline без модели и скоринг с
+  моделью, подмешивание обратной связи.
+
+**Проверка**
+- `python scripts/train_ml.py` -> 598 образцов, hold-out accuracy ≈ 0.99,
+  модель сохранена. Топ-признаки: lag_to_confirmation, volatility_scale,
+  pattern_confidence.
+- `python -m pytest -q` -> 96 passed (без регрессий).
+- Перезапуск воркфлоу `Chart Scanner` -> чистый старт на порту 5000, REST/WS 200.
+
+## Sub-phase 2.4 — Интеграция ML-фильтра в сканирование
+
+**Новое**
+- `main.py`:
+  - Глобальный `ml_pipeline = MLPipeline(CONFIG.ml.ml_model_path)`,
+    `ml_score_threshold`, `last_model_retrain`, `_retrain_in_progress`.
+    Если модель уже есть на старте — `last_model_retrain` ставится в «сейчас»,
+    чтобы не запускать тяжёлое переобучение на первом тике.
+  - Хелперы: `_tf_minutes(tf)` (минуты таймфрейма), `_load_synthetic_dataset`,
+    `_retrain_ml` (пересборка+обучение в пуле через `asyncio.to_thread`,
+    перезагрузка пайплайна), `_maybe_auto_retrain` (фоновая проверка интервала
+    `ml_retrain_interval_hours`).
+  - `on_market_update` запускает `asyncio.create_task(_maybe_auto_retrain())`
+    (не блокирует сканирование).
+  - `ml_score` считается для матчей режимов `causal_patterns`
+    (`on_market_update_causal_scan` + `run_initial_causal_scan`) и `type_scan`;
+    поле `ml_score` добавлено в WS-сообщения. Матч отсекается, только если
+    модель существует И `ml_score < ml_score_threshold` (бэквард-совместимость:
+    без модели `ml_score=1.0`, фильтрация не применяется).
+  - Эндпоинты: `POST /api/retrain-ml` (ручное переобучение, возвращает метрики;
+    409 при параллельном запуске), `GET /api/ml-status`
+    (`model_exists`, `last_trained_at`, `n_samples`, `accuracy`, `top_features`,
+    `ml_score_threshold`, `retrain_in_progress`, `last_model_retrain`).
+- `database.get_all_feedback()` используется для подмешивания обратной связи при
+  переобучении (учитываются только записи с восстановимыми признаками).
+- `tests/test_ml_integration.py` — 6 тестов: маппинг таймфреймов, мягкое
+  поведение без модели, контракт гейта фильтрации, отсечение слабых матчей с
+  моделью, ответы `/api/retrain-ml` и `/api/ml-status`.
+
+**Проверка**
+- `python -m pytest -q` -> 102 passed (без регрессий).
+- Перезапуск воркфлоу -> чистый старт на порту 5000.
+- Живые эндпоинты: `GET /api/ml-status` -> модель есть, accuracy≈0.99;
+  `POST /api/retrain-ml` -> `success=true`, метрики и отчёт возвращаются.
+
+## Sub-phase 2.5 — Реальная валидация на размеченной синтетике
+
+**Новое**
+- `validation/runner.py` -> `ValidationRunner.run_synthetic_validation(detector,
+  dataset, ml_pipeline=None, ml_threshold=None)`:
+  - По каждому образцу синтетики запускает каузальную детекцию
+    (`extract_features_causal`) и сверяет распознанный тип с заявленным
+    `label` (паттерн против `noise`).
+  - Считает два режима: `raw` (только геометрия) и `ml` (геометрия + ML-фильтр
+    `ml_score >= ml_threshold`), что наглядно показывает вклад ML.
+  - Метрики: per-pattern precision/recall/F1, общие `true_positive_rate` и
+    `false_positive_rate`, плюс гистограмма `ml_score_distribution` (10 корзин).
+- `scripts/validate.py --synthetic`: грузит `data/synthetic_dataset.json`,
+  прогоняет синтетическую валидацию с ML-фильтром, печатает TPR/FPR (raw vs ML)
+  и распределение ml_score, сохраняет `data/validation_synthetic.json`.
+- `tests/test_synthetic_validation.py` — 4 теста на структуру отчёта,
+  корректность TPR/FPR, per-pattern счётчиков и гистограммы (стаб-детектор для
+  детерминированности).
+
+**Результаты (600 образцов: 300 паттернов / 300 шума, модель acc≈0.99)**
+- Только геометрия: TPR 73.67%, FPR 43.67%.
+- Геометрия + ML-фильтр: TPR 73.67%, FPR **0.00%**.
+- ML-фильтр убирает все ложные срабатывания на шуме, не теряя истинные
+  паттерны: precision по всем типам поднимается до 100% при сохранении recall.
+- Распределение ml_score выражено бимодальное (масса у 0.0–0.1 и 0.9–1.0),
+  то есть модель уверенно разделяет релевантные и нерелевантные матчи.
+
+**Проверка**
+- `python scripts/validate.py --synthetic` -> отчёт сохранён в
+  `data/validation_synthetic.json`.
+- `python -m pytest -q` -> 106 passed.

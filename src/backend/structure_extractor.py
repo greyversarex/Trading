@@ -80,6 +80,11 @@ class StructureType(str, Enum):
     BEAR_FLAG = "bear_flag"
     RISING_WEDGE = "rising_wedge"
     FALLING_WEDGE = "falling_wedge"
+    TRIPLE_TOP = "triple_top"
+    TRIPLE_BOTTOM = "triple_bottom"
+    CUP_AND_HANDLE = "cup_and_handle"
+    PENNANT = "pennant"
+    ROUNDING_BOTTOM = "rounding_bottom"
     UNKNOWN = "unknown"
 
 
@@ -1616,6 +1621,256 @@ class StructureExtractor:
             breakout_distance=float(upper - lower),
         )
 
+    # ------------------------------------------------------------------
+    # Каузальные кандидаты недостающих паттернов (Phase 2.2)
+    # ------------------------------------------------------------------
+    def _candidate_triple_top(self, closes: np.ndarray, pivots: List[PivotPoint],
+                              volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        highs = [p for p in pivots if p.is_high]
+        price_range = float(np.max(closes) - np.min(closes))
+        if len(highs) < 3 or price_range <= 0:
+            return None
+        tol_abs = max(CONFIG.pattern.triple_top_tolerance * price_range,
+                      CONFIG.pattern.double_top_atr_mult * volatility_scale)
+        if tol_abs <= 0:
+            return None
+        best, best_conf = None, 0.0
+        for i in range(len(highs) - 2):
+            for j in range(i + 1, len(highs) - 1):
+                for k in range(j + 1, len(highs)):
+                    peaks = [highs[i].value, highs[j].value, highs[k].value]
+                    if (max(peaks) - min(peaks)) >= tol_abs:
+                        continue
+                    t1 = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[j].index]
+                    t2 = [p for p in pivots if not p.is_high and highs[j].index < p.index < highs[k].index]
+                    if not t1 or not t2:
+                        continue
+                    neckline = min(min(p.value for p in t1), min(p.value for p in t2))
+                    avg_peak = float(np.mean(peaks))
+                    depth = (avg_peak - neckline) / price_range
+                    if depth <= 0.10:
+                        continue
+                    spread = (max(peaks) - min(peaks)) / tol_abs
+                    conf = (1.0 - spread) * 0.5 + min(1.0, depth / 0.3) * 0.5
+                    if conf > best_conf:
+                        best_conf = conf
+                        best = _PatternCandidate(
+                            structure_type=StructureType.TRIPLE_TOP,
+                            confidence=conf,
+                            candidate_index=int(highs[k].index),
+                            family="breakout_level",
+                            direction="down",
+                            breakout_level=float(neckline),
+                            breakout_distance=float(avg_peak - neckline),
+                        )
+        return best
+
+    def _candidate_triple_bottom(self, closes: np.ndarray, pivots: List[PivotPoint],
+                                 volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        lows = [p for p in pivots if not p.is_high]
+        price_range = float(np.max(closes) - np.min(closes))
+        if len(lows) < 3 or price_range <= 0:
+            return None
+        tol_abs = max(CONFIG.pattern.triple_bottom_tolerance * price_range,
+                      CONFIG.pattern.double_top_atr_mult * volatility_scale)
+        if tol_abs <= 0:
+            return None
+        best, best_conf = None, 0.0
+        for i in range(len(lows) - 2):
+            for j in range(i + 1, len(lows) - 1):
+                for k in range(j + 1, len(lows)):
+                    troughs = [lows[i].value, lows[j].value, lows[k].value]
+                    if (max(troughs) - min(troughs)) >= tol_abs:
+                        continue
+                    p1 = [p for p in pivots if p.is_high and lows[i].index < p.index < lows[j].index]
+                    p2 = [p for p in pivots if p.is_high and lows[j].index < p.index < lows[k].index]
+                    if not p1 or not p2:
+                        continue
+                    neckline = max(max(p.value for p in p1), max(p.value for p in p2))
+                    avg_trough = float(np.mean(troughs))
+                    height = (neckline - avg_trough) / price_range
+                    if height <= 0.10:
+                        continue
+                    spread = (max(troughs) - min(troughs)) / tol_abs
+                    conf = (1.0 - spread) * 0.5 + min(1.0, height / 0.3) * 0.5
+                    if conf > best_conf:
+                        best_conf = conf
+                        best = _PatternCandidate(
+                            structure_type=StructureType.TRIPLE_BOTTOM,
+                            confidence=conf,
+                            candidate_index=int(lows[k].index),
+                            family="breakout_level",
+                            direction="up",
+                            breakout_level=float(neckline),
+                            breakout_distance=float(neckline - avg_trough),
+                        )
+        return best
+
+    def _candidate_cup_and_handle(self, closes: np.ndarray, pivots: List[PivotPoint],
+                                  volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        highs = [p for p in pivots if p.is_high]
+        lows = [p for p in pivots if not p.is_high]
+        price_range = float(np.max(closes) - np.min(closes))
+        if len(highs) < 2 or not lows or price_range <= 0:
+            return None
+        rim_tol = max(0.06 * price_range, CONFIG.pattern.double_top_atr_mult * volatility_scale)
+        best, best_conf = None, 0.0
+        for a in range(len(highs) - 1):
+            for b in range(a + 1, len(highs)):
+                L, R = highs[a], highs[b]
+                if R.index - L.index < 8:
+                    continue
+                if abs(L.value - R.value) >= rim_tol:
+                    continue
+                inner_lows = [p for p in lows if L.index < p.index < R.index]
+                if not inner_lows:
+                    continue
+                cup_bottom = min(inner_lows, key=lambda p: p.value)
+                rim = min(L.value, R.value)
+                depth = (rim - cup_bottom.value) / price_range
+                if depth < CONFIG.pattern.cup_and_handle_depth_min:
+                    continue
+                mid = (L.index + R.index) / 2.0
+                half = (R.index - L.index) / 2.0
+                symmetry = 1.0 - min(1.0, abs(cup_bottom.index - mid) / max(half, 1e-9))
+                if symmetry < 0.3:
+                    continue
+                handle_lows = [p for p in lows if R.index < p.index]
+                if not handle_lows:
+                    continue
+                handle_low = min(handle_lows, key=lambda p: p.index)
+                depth_abs = max(rim - cup_bottom.value, 1e-9)
+                handle_retrace = (R.value - handle_low.value) / depth_abs
+                if handle_retrace < 0 or handle_retrace > CONFIG.pattern.cup_and_handle_handle_retrace_max:
+                    continue
+                conf = symmetry * 0.4 + (1.0 - handle_retrace) * 0.3 + min(1.0, depth / 0.3) * 0.3
+                if conf > best_conf:
+                    best_conf = conf
+                    best = _PatternCandidate(
+                        structure_type=StructureType.CUP_AND_HANDLE,
+                        confidence=conf,
+                        candidate_index=int(handle_low.index),
+                        family="breakout_level",
+                        direction="up",
+                        breakout_level=float(max(L.value, R.value)),
+                        breakout_distance=float(rim - cup_bottom.value),
+                    )
+        return best
+
+    def _candidate_pennant(self, closes: np.ndarray, pivots: List[PivotPoint],
+                           volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        n = len(closes)
+        price_range = float(np.max(closes) - np.min(closes))
+        if n < 20 or price_range <= 0:
+            return None
+        # Полюс: сильное движение в первой половине ряда.
+        half = max(10, int(n * 0.6))
+        seg = closes[:half]
+        lo_i = int(np.argmin(seg))
+        hi_after = seg[lo_i:]
+        if len(hi_after) < 3:
+            return None
+        hi_rel = int(np.argmax(hi_after))
+        hi_i = lo_i + hi_rel
+        if hi_i <= lo_i:
+            return None
+        pole_move = (closes[hi_i] - closes[lo_i]) / max(closes[lo_i], 1e-9)
+        if pole_move < CONFIG.pattern.pennant_pole_min_move:
+            return None
+        top = float(closes[hi_i])
+        # Зона консолидации после полюса. Затухающие колебания вымпела дают мало
+        # пивотов, поэтому схождение измеряем по сжатию амплитуды (size диапазона)
+        # самих цен, а не по линиям пивотов. Хвост ряда (потенциальный пробой)
+        # исключаем эвристически, оставляя ~65% пост-полюсной области под вымпел.
+        post_len = n - hi_i
+        if post_len < 10:
+            return None
+        consol_end = hi_i + max(8, int(0.65 * post_len))
+        consol_end = min(consol_end, n - 1)
+        region = closes[hi_i:consol_end]
+        if len(region) < 8:
+            return None
+        half = len(region) // 2
+        r1 = float(np.ptp(region[:half]))
+        r2 = float(np.ptp(region[half:]))
+        if r1 <= 0:
+            return None
+        convergence = 1.0 - r2 / r1
+        if convergence < CONFIG.pattern.pennant_convergence_min:
+            return None
+        cand_idx = int(consol_end - 1)
+        conf = min(1.0, pole_move / 0.25) * 0.5 + min(1.0, convergence) * 0.5
+        return _PatternCandidate(
+            structure_type=StructureType.PENNANT,
+            confidence=conf,
+            candidate_index=cand_idx,
+            family="breakout_level",
+            direction="up",
+            breakout_level=top,
+            breakout_distance=float(max(closes[hi_i] - closes[lo_i], price_range * 0.03)),
+        )
+
+    def _candidate_rounding_bottom(self, closes: np.ndarray, pivots: List[PivotPoint],
+                                   volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        n = len(closes)
+        price_range = float(np.max(closes) - np.min(closes))
+        if n < 20 or price_range <= 0:
+            return None
+        lows = [p for p in pivots if not p.is_high]
+        highs = [p for p in pivots if p.is_high]
+        if not lows or not highs:
+            return None
+        bottom = min(lows, key=lambda p: p.value)
+        b = bottom.index
+        # Дно должно быть глобальным минимумом, расположенным около центра ряда:
+        # это отличает симметричную «чашу» от восходящего/нисходящего канала, где
+        # самый низкий минимум смещён к одному из краёв.
+        if b < 0.35 * n or b > 0.65 * n:
+            return None
+        left_highs = [p for p in highs if p.index < b]
+        if not left_highs:
+            return None
+        left_rim = max(left_highs, key=lambda p: p.value)
+        rim_val = left_rim.value
+        depth = (rim_val - bottom.value) / price_range
+        if depth < CONFIG.pattern.rounding_bottom_curvature_min:
+            return None
+        # Гладкость: парабола по симметричному окну вокруг дна.
+        start = left_rim.index
+        span = b - start
+        end = min(n - 1, b + span)
+        if end - start < 6:
+            return None
+        xs = np.arange(start, end + 1, dtype=float)
+        ys = closes[start:end + 1]
+        xc = xs - xs.mean()
+        coeffs = np.polyfit(xc, ys, 2)
+        a = coeffs[0]
+        if a <= 0:  # требуется выпуклость вверх (U-образность)
+            return None
+        fit_vals = np.polyval(coeffs, xc)
+        resid = float(np.mean(np.abs(ys - fit_vals)))
+        denom = max(price_range, CONFIG.pattern.fit_residual_atr_mult * volatility_scale)
+        smoothness = max(0.0, 1.0 - resid / denom)
+        if smoothness < 0.6:
+            return None
+        # Парабола должна объяснять форму существенно лучше прямой — иначе это
+        # просто линейный тренд (канал), а не закруглённое дно.
+        lin = np.polyfit(xc, ys, 1)
+        lin_resid = float(np.mean(np.abs(ys - np.polyval(lin, xc))))
+        if resid > 0.6 * lin_resid:
+            return None
+        conf = min(1.0, depth / 0.3) * 0.5 + smoothness * 0.5
+        return _PatternCandidate(
+            structure_type=StructureType.ROUNDING_BOTTOM,
+            confidence=conf,
+            candidate_index=int(b),
+            family="breakout_level",
+            direction="up",
+            breakout_level=float(rim_val),
+            breakout_distance=float(rim_val - bottom.value),
+        )
+
     def _build_candidate(self, structure_type: StructureType, closes: np.ndarray,
                          pivots: List[PivotPoint], candles,
                          volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
@@ -1626,6 +1881,16 @@ class StructureExtractor:
         идентично фиксированным порогам (обратная совместимость).
         """
         st = structure_type
+        if st == StructureType.TRIPLE_TOP:
+            return self._candidate_triple_top(closes, pivots, volatility_scale)
+        if st == StructureType.TRIPLE_BOTTOM:
+            return self._candidate_triple_bottom(closes, pivots, volatility_scale)
+        if st == StructureType.CUP_AND_HANDLE:
+            return self._candidate_cup_and_handle(closes, pivots, volatility_scale)
+        if st == StructureType.PENNANT:
+            return self._candidate_pennant(closes, pivots, volatility_scale)
+        if st == StructureType.ROUNDING_BOTTOM:
+            return self._candidate_rounding_bottom(closes, pivots, volatility_scale)
         if st == StructureType.DOUBLE_TOP:
             return self._candidate_double_top(closes, pivots, volatility_scale)
         if st == StructureType.DOUBLE_BOTTOM:
@@ -1821,18 +2086,45 @@ class StructureExtractor:
         normalized_line = self.normalize_line(closes)
         norm_pivots = self.detect_pivots(normalized_line)
         raw_pivots = self._map_pivots_to_raw(norm_pivots, closes)
-        cand = self._build_candidate(base.structure_type, closes, raw_pivots, candles,
-                                     volatility_scale=volatility_scale)
+
+        # Сначала пробуем специфичные новые паттерны (Phase 2.2) в порядке
+        # приоритета: они «более конкретны», чем базовая классификация. Если
+        # один из них ПОДТВЕРЖДАЕТСЯ — он выигрывает. Иначе откатываемся к
+        # кандидату по базовому типу (поведение Phase 1 сохраняется полностью,
+        # т.к. новые билдеры возвращают None на формах double/channel/и т.п.).
+        priority_types = [
+            StructureType.TRIPLE_TOP, StructureType.TRIPLE_BOTTOM,
+            StructureType.CUP_AND_HANDLE, StructureType.PENNANT,
+            StructureType.ROUNDING_BOTTOM,
+        ]
+        cand = None
+        res = None
+        for st in priority_types:
+            if st == base.structure_type:
+                continue
+            c = self._build_candidate(st, closes, raw_pivots, candles,
+                                      volatility_scale=volatility_scale)
+            if c is None:
+                continue
+            r = self._confirm_candidate(c, candles)
+            if r.confirmed:
+                cand, res = c, r
+                break
+
         if cand is None:
-            base.candidate_index = -1
-            base.candidate_time = -1
-            base.confirmation_index = -1
-            base.confirmation_time = -1
-            base.is_confirmed = False
-            base.is_invalidated = False
-            base.is_pattern_active = False
-            base.pattern_freshness = 0.5
-            return base
+            cand = self._build_candidate(base.structure_type, closes, raw_pivots, candles,
+                                         volatility_scale=volatility_scale)
+            if cand is None:
+                base.candidate_index = -1
+                base.candidate_time = -1
+                base.confirmation_index = -1
+                base.confirmation_time = -1
+                base.is_confirmed = False
+                base.is_invalidated = False
+                base.is_pattern_active = False
+                base.pattern_freshness = 0.5
+                return base
+            res = self._confirm_candidate(cand, candles)
 
         base.candidate_index = int(cand.candidate_index)
         base.candidate_time = int(candles[cand.candidate_index].open_time)
@@ -2071,11 +2363,39 @@ class StructureExtractor:
         
         return float((hh_score + hl_score) / 2)
 
+    def _detect_missing_patterns_norm(self, pivots: List[PivotPoint], line: np.ndarray) -> Dict[str, float]:
+        """Мульти-лейбл детекция недостающих паттернов (Phase 2.2) в
+        нормализованном пространстве — для режима type_scan.
+
+        Переиспользует те же геометрические билдеры кандидатов, что и каузальный
+        слой (с ``volatility_scale=0``), и возвращает словарь
+        ``{тип: уверенность}`` для типов, прошедших порог ``*_min_conf``. Не
+        влияет на основную классификацию — только дополняет ``detected_patterns``.
+        """
+        out: Dict[str, float] = {}
+        builders = [
+            (StructureType.TRIPLE_TOP, self._candidate_triple_top, CONFIG.pattern.triple_top_min_conf),
+            (StructureType.TRIPLE_BOTTOM, self._candidate_triple_bottom, CONFIG.pattern.triple_bottom_min_conf),
+            (StructureType.CUP_AND_HANDLE, self._candidate_cup_and_handle, CONFIG.pattern.cup_and_handle_min_conf),
+            (StructureType.PENNANT, self._candidate_pennant, CONFIG.pattern.pennant_min_conf),
+            (StructureType.ROUNDING_BOTTOM, self._candidate_rounding_bottom, CONFIG.pattern.rounding_bottom_min_conf),
+        ]
+        for st, fn, min_conf in builders:
+            try:
+                cand = fn(line, pivots, 0.0)
+            except Exception:
+                cand = None
+            if cand is not None and cand.confidence >= min_conf:
+                out[st.value] = round(float(cand.confidence), 3)
+        return out
+
     def classify_structure(self, trend: float, compression: float, 
                           pivots: List[PivotPoint], line: np.ndarray) -> Tuple[StructureType, float, Dict[str, float], bool, float]:
         price_range = np.max(line) - np.min(line)
         if price_range == 0:
             return StructureType.UNKNOWN, 0.0, {}, True, 1.0
+
+        missing_patterns = self._detect_missing_patterns_norm(pivots, line)
 
         overall_move = abs(line[-1] - line[0]) / price_range
 
@@ -2177,6 +2497,9 @@ class StructureExtractor:
             active_map[StructureType.ACCUMULATION] = True
 
         if not candidates:
+            if missing_patterns:
+                top = max(missing_patterns.items(), key=lambda kv: kv[1])
+                return StructureType(top[0]), float(top[1]), dict(missing_patterns), True, 1.0
             return StructureType.UNKNOWN, 0.0, {}, True, 1.0
 
         active_candidates = [(st, conf) for st, conf in candidates if active_map.get(st, True)]
@@ -2185,6 +2508,9 @@ class StructureExtractor:
         all_patterns: Dict[str, float] = {}
         for st, conf in candidates:
             key = st.value
+            if key not in all_patterns or conf > all_patterns[key]:
+                all_patterns[key] = round(float(conf), 3)
+        for key, conf in missing_patterns.items():
             if key not in all_patterns or conf > all_patterns[key]:
                 all_patterns[key] = round(float(conf), 3)
 

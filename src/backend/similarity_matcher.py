@@ -28,6 +28,8 @@ DIRECTIONAL_TYPES = {
 REVERSAL_TYPES = {
     StructureType.DOUBLE_TOP, StructureType.DOUBLE_BOTTOM,
     StructureType.HEAD_SHOULDERS, StructureType.INV_HEAD_SHOULDERS,
+    StructureType.TRIPLE_TOP, StructureType.TRIPLE_BOTTOM,
+    StructureType.CUP_AND_HANDLE, StructureType.ROUNDING_BOTTOM,
 }
 CONSOLIDATION_TYPES = {
     StructureType.COMPRESSION, StructureType.TRIANGLE,
@@ -38,6 +40,7 @@ CONSOLIDATION_TYPES = {
     StructureType.SYMMETRICAL_TRIANGLE,
     StructureType.CHANNEL_UP, StructureType.CHANNEL_DOWN,
     StructureType.HORIZONTAL_CHANNEL,
+    StructureType.PENNANT,
 }
 
 OPPOSITE_PAIRS = {
@@ -50,6 +53,7 @@ OPPOSITE_PAIRS = {
     (StructureType.RISING_WEDGE, StructureType.FALLING_WEDGE),
     (StructureType.ASCENDING_TRIANGLE, StructureType.DESCENDING_TRIANGLE),
     (StructureType.CHANNEL_UP, StructureType.CHANNEL_DOWN),
+    (StructureType.TRIPLE_TOP, StructureType.TRIPLE_BOTTOM),
 }
 
 MIN_CONFIDENCE_THRESHOLDS = {
@@ -79,6 +83,11 @@ MIN_CONFIDENCE_THRESHOLDS = {
     StructureType.CHANNEL_UP: 0.45,
     StructureType.CHANNEL_DOWN: 0.45,
     StructureType.HORIZONTAL_CHANNEL: 0.40,
+    StructureType.TRIPLE_TOP: 0.45,
+    StructureType.TRIPLE_BOTTOM: 0.45,
+    StructureType.CUP_AND_HANDLE: 0.45,
+    StructureType.PENNANT: 0.45,
+    StructureType.ROUNDING_BOTTOM: 0.45,
 }
 
 
@@ -120,6 +129,11 @@ class SimilarityMatcher:
             StructureType.CHANNEL_DOWN: StructureType.CHANNEL_UP,
             StructureType.SYMMETRICAL_TRIANGLE: StructureType.SYMMETRICAL_TRIANGLE,
             StructureType.HORIZONTAL_CHANNEL: StructureType.HORIZONTAL_CHANNEL,
+            StructureType.TRIPLE_TOP: StructureType.TRIPLE_BOTTOM,
+            StructureType.TRIPLE_BOTTOM: StructureType.TRIPLE_TOP,
+            StructureType.CUP_AND_HANDLE: StructureType.CUP_AND_HANDLE,
+            StructureType.PENNANT: StructureType.PENNANT,
+            StructureType.ROUNDING_BOTTOM: StructureType.ROUNDING_BOTTOM,
         }
         mirrored_type = type_mirror_map.get(features.structure_type, features.structure_type)
         mirrored_slopes = [-s for s in features.pivot_slopes] if features.pivot_slopes else []

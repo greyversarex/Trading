@@ -118,6 +118,169 @@ class ValidationRunner:
         )
         return result
 
+    def run_synthetic_validation(
+        self,
+        detector,
+        dataset: List[Dict],
+        ml_pipeline=None,
+        ml_threshold: Optional[float] = None,
+    ) -> Dict:
+        """Валидация на размеченной синтетике (фаза 2.5).
+
+        По каждому образцу запускает каузальную детекцию и оценивает, верно ли
+        детектор распознал заявленный класс. Сравниваются два режима:
+
+          * ``raw``  — только геометрия (подтверждённые паттерны);
+          * ``ml``   — геометрия + ML-фильтр (``ml_score >= ml_threshold``).
+
+        Возвращает per-pattern precision/recall/F1, overall
+        ``false_positive_rate`` / ``true_positive_rate`` для обоих режимов и
+        гистограмму ``ml_score_distribution``.
+        """
+        threshold = (
+            ml_threshold if ml_threshold is not None else CONFIG.ml.ml_score_threshold
+        )
+        use_ml = ml_pipeline is not None and getattr(ml_pipeline, "model_exists", False)
+
+        # Импорт здесь, чтобы избежать циклов и тяжёлых зависимостей наверху.
+        from ..synthetic import SyntheticChartGenerator
+
+        pattern_classes = {
+            s.get("label")
+            for s in dataset
+            if s.get("label") and s.get("label") != "noise"
+        }
+
+        # Счётчики per-pattern для двух режимов.
+        def _empty_pp() -> Dict[str, Dict[str, int]]:
+            return {c: {"tp": 0, "fp": 0, "fn": 0} for c in pattern_classes}
+
+        pp_raw = _empty_pp()
+        pp_ml = _empty_pp()
+
+        n_pattern = 0
+        n_noise = 0
+        tpr_hits_raw = 0
+        tpr_hits_ml = 0
+        fp_noise_raw = 0
+        fp_noise_ml = 0
+        ml_scores: List[float] = []
+
+        for sample in dataset:
+            candles_raw = sample.get("candles", [])
+            if not candles_raw:
+                continue
+            candles = [
+                SyntheticChartGenerator.candle_from_dict(c) for c in candles_raw
+            ]
+            intended = sample.get("label", "noise")
+            is_pattern = intended != "noise"
+            if is_pattern:
+                n_pattern += 1
+            else:
+                n_noise += 1
+
+            features = detector.extract_features_causal(candles)
+            confirmed = features is not None and bool(
+                getattr(features, "is_confirmed", False)
+            )
+            detected = (
+                features.structure_type.value
+                if (features is not None and confirmed)
+                else None
+            )
+
+            # ML-оценка только для подтверждённых детекций.
+            ml_score = 1.0
+            if confirmed and use_ml:
+                ml_score = ml_pipeline.score_features(features, candles)
+                ml_scores.append(float(ml_score))
+
+            detected_raw = confirmed
+            detected_ml = confirmed and (not use_ml or ml_score >= threshold)
+
+            # --- TPR / FPR (бинарно: паттерн против шума) ---
+            if is_pattern:
+                if detected_raw and detected == intended:
+                    tpr_hits_raw += 1
+                if detected_ml and detected == intended:
+                    tpr_hits_ml += 1
+            else:
+                if detected_raw:
+                    fp_noise_raw += 1
+                if detected_ml:
+                    fp_noise_ml += 1
+
+            # --- Per-pattern precision/recall ---
+            for mode, pp, det_flag in (
+                ("raw", pp_raw, detected_raw),
+                ("ml", pp_ml, detected_ml),
+            ):
+                if det_flag and detected in pp:
+                    if detected == intended:
+                        pp[detected]["tp"] += 1
+                    else:
+                        pp[detected]["fp"] += 1
+                # пропущенный истинный паттерн
+                if is_pattern and intended in pp:
+                    hit = det_flag and detected == intended
+                    if not hit:
+                        pp[intended]["fn"] += 1
+
+        def _finalize_pp(pp: Dict[str, Dict[str, int]]) -> Dict[str, Dict]:
+            out: Dict[str, Dict] = {}
+            for c, s in pp.items():
+                tp, fp, fn = s["tp"], s["fp"], s["fn"]
+                prec = tp / (tp + fp) if (tp + fp) else 0.0
+                rec = tp / (tp + fn) if (tp + fn) else 0.0
+                f1 = (
+                    2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+                )
+                out[c] = {
+                    "tp": tp,
+                    "fp": fp,
+                    "fn": fn,
+                    "precision": round(prec, 4),
+                    "recall": round(rec, 4),
+                    "f1": round(f1, 4),
+                }
+            return out
+
+        def _rates(tpr_hits: int, fp_noise: int) -> Dict[str, float]:
+            tpr = tpr_hits / n_pattern if n_pattern else 0.0
+            fpr = fp_noise / n_noise if n_noise else 0.0
+            return {
+                "true_positive_rate": round(tpr, 4),
+                "false_positive_rate": round(fpr, 4),
+            }
+
+        # Гистограмма ml_score (10 корзин 0..1).
+        hist = [0] * 10
+        for sc in ml_scores:
+            idx = min(9, max(0, int(sc * 10)))
+            hist[idx] += 1
+
+        return {
+            "n_samples": len(dataset),
+            "n_pattern": n_pattern,
+            "n_noise": n_noise,
+            "ml_filter_used": use_ml,
+            "ml_threshold": threshold,
+            "raw": {
+                **_rates(tpr_hits_raw, fp_noise_raw),
+                "by_pattern": _finalize_pp(pp_raw),
+            },
+            "ml": {
+                **_rates(tpr_hits_ml, fp_noise_ml),
+                "by_pattern": _finalize_pp(pp_ml),
+            },
+            "ml_score_distribution": {
+                "bins": [f"{i/10:.1f}-{(i+1)/10:.1f}" for i in range(10)],
+                "counts": hist,
+                "n_scored": len(ml_scores),
+            },
+        }
+
     async def run_multi_symbol(
         self,
         detector,

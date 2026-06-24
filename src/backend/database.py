@@ -162,6 +162,38 @@ class Database:
             """, (match_id, 1 if is_relevant else 0))
             await db.commit()
     
+    async def get_all_feedback(self) -> List[Dict[str, Any]]:
+        """Все записи обратной связи вместе с данными матча.
+
+        Используется ML-тренером. Возвращает список словарей с полями
+        ``match_id``, ``is_relevant`` и метаданными матча (symbol, timeframe,
+        structure_type, similarity_score). Полная история свечей в БД не
+        хранится, поэтому признаки для обучения восстановимы не для каждой
+        записи — тренер пропускает записи без поля ``features``.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT f.id, f.match_id, f.is_relevant, f.created_at,
+                       m.symbol, m.timeframe, m.structure_type, m.similarity_score
+                FROM feedback f
+                LEFT JOIN matches m ON f.match_id = m.id
+                ORDER BY f.created_at ASC
+            """) as cursor:
+                rows = await cursor.fetchall()
+                return [
+                    {
+                        "id": r["id"],
+                        "match_id": r["match_id"],
+                        "is_relevant": bool(r["is_relevant"]),
+                        "symbol": r["symbol"],
+                        "timeframe": r["timeframe"],
+                        "structure_type": r["structure_type"],
+                        "similarity_score": r["similarity_score"],
+                    }
+                    for r in rows
+                ]
+
     async def get_feedback_stats(self, structure_id: int) -> Dict[str, int]:
         """Get feedback statistics for a structure's matches."""
         async with aiosqlite.connect(self.db_path) as db:

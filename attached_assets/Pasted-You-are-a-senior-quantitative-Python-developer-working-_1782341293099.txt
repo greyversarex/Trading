@@ -1,0 +1,245 @@
+You are a senior quantitative Python developer working on a FastAPI crypto chart scanner. Phase 0 + Phase 1 have been completed (see UPGRADE_LOG.md). The project now has:
+
+src/backend/config.py with centralized configuration.
+src/backend/validation/ with history, metrics, and runner.
+src/backend/structure_extractor.py with extract_features_causal(candles) that produces confirmed, non-repainting pattern signals.
+src/backend/level_detector_v2.py with DBSCAN, RANSAC, volume profile, and round-number levels.
+39 passing tests.
+Now implement Phase 2: missing pattern detectors, synthetic labeled data generation, and an ML filter to reduce false positives. Work incrementally, test each sub-phase, and update UPGRADE_LOG.md and create PHASE02_REPORT.md.
+
+Global constraints
+Use Python 3.11 + FastAPI + existing dependencies (numpy, scipy, scikit-learn, aiohttp).
+Do not break existing REST/WebSocket formats. New fields are allowed.
+Keep the app runnable with python run.py after each sub-phase.
+Use CONFIG from src/backend/config.py for any new tunable parameters.
+Update UPGRADE_LOG.md after each sub-phase.
+Create PHASE02_REPORT.md at the end.
+Sub-phase 2.1 — Synthetic pattern generator
+Create src/backend/synthetic.py with a SyntheticChartGenerator class. It must generate realistic OHLCV series with optional injected patterns.
+
+Required functions:
+
+Python
+
+def generate_random_walk(n=100, start_price=100.0, volatility=0.01, seed=None) -> List[CandleData]:
+    """Generate random-walk candles with realistic open/high/low/close/volume."""
+
+def inject_triple_top(candles: List[CandleData], start_idx, end_idx, peak_noise=0.005) -> List[CandleData]:
+    """Modify candles to form three peaks at roughly the same level."""
+
+def inject_triple_bottom(candles: List[CandleData], start_idx, end_idx, trough_noise=0.005) -> List[CandleData]:
+    """Modify candles to form three troughs at roughly the same level."""
+
+def inject_cup_and_handle(candles: List[CandleData], cup_start, cup_end, handle_end) -> List[CandleData]:
+    """Rounded U-shaped bottom followed by a small consolidation/handle."""
+
+def inject_pennant(candles: List[CandleData], pole_start, pole_end, pennant_end) -> List[CandleData]:
+    """Strong pole followed by small symmetrical triangle."""
+
+def inject_rounding_bottom(candles: List[CandleData], start_idx, end_idx) -> List[CandleData]:
+    """Smooth U-shaped rounded bottom."""
+Requirements:
+
+Generated candles must use the existing CandleData dataclass from src/backend/binance_scanner.py (or wherever it is defined).
+Each pattern must have a clear, realistic shape: the injected segment should be visually recognizable on a chart.
+Add random noise around the ideal shape so the detector is tested on imperfect data.
+Add a helper generate_labeled_dataset(n_per_class=100, n_noise=500, seed=None) that returns a list of dicts:
+JSON
+
+{"candles": [...], "label": "triple_top|triple_bottom|cup_and_handle|pennant|rounding_bottom|noise", "target_confirmed": true|false}
+target_confirmed = true for pattern classes, false for noise.
+Save the dataset to data/synthetic_dataset.json (or a compact binary format) via scripts/generate_synthetic.py CLI.
+Tests: tests/test_synthetic.py
+
+Test that each pattern generator produces at least 20 candles.
+Test that the resulting series has a recognizable shape (e.g., for triple top, the three highest closes are within 2% of each other and spaced roughly evenly).
+Test that noise series do not accidentally match any pattern visually (sanity check via simple statistics).
+After this sub-phase, run:
+
+Bash
+
+python scripts/generate_synthetic.py
+python -m pytest tests/test_synthetic.py -v
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 2.2 — Missing pattern detectors
+Add the following detectors to src/backend/structure_extractor.py, integrated into the causal layer (extract_features_causal). Do not break the legacy extract_features(price_line).
+
+New StructureType values:
+
+triple_top
+triple_bottom
+cup_and_handle
+pennant
+rounding_bottom
+Add corresponding config values in src/backend/config.py under PatternConfig:
+
+triple_top_tolerance, triple_top_min_conf
+triple_bottom_tolerance, triple_bottom_min_conf
+cup_and_handle_depth_min, cup_and_handle_handle_retrace_max, cup_and_handle_min_conf
+pennant_pole_min_move, pennant_convergence_min, pennant_min_conf
+rounding_bottom_curvature_min, rounding_bottom_min_conf
+Implementation notes:
+
+Use raw prices and volatility_scale (from Phase 1.2) for tolerances, exactly like the existing causal detectors.
+Each detector must:
+Build a candidate pattern from pivots.
+Compute a confidence score.
+Return a PatternCandidate object (or dict) with pattern_type, confidence, candidate_index, breakout_level, is_channel, etc.
+Be confirmed by the existing _confirm_candidate machinery (breakout, channel, trend, or range).
+Register the new types in src/backend/similarity_matcher.py:
+CONSOLIDATION_TYPES, OPPOSITE_PAIRS, type_mirror_map, MIN_CONFIDENCE_THRESHOLDS.
+Update main.py dispatcher so the new types can be emitted by causal_patterns and type_scan modes.
+Specific detector logic:
+
+Triple Top/Bottom: find three high/low pivots within tolerance * price_range (or ATR-scaled) of each other, with valleys/peaks between them. Confidence based on peak/trough equality and middle amplitude.
+Cup and Handle: detect a U-shaped rounded bottom (cup) followed by a small pullback/consolidation (handle) on the right side. The handle should not retrace more than handle_retrace_max of the cup depth. Confidence based on cup symmetry and handle proportion.
+Pennant: detect a strong pole (impulsive move) followed by a small converging triangle. Use the existing triangle logic on the post-pole segment; confidence based on pole strength and convergence.
+Rounding Bottom: detect a smooth U-shaped curve using curvature / second-derivative analysis of lows; confidence based on smoothness and depth.
+Tests: tests/test_missing_patterns.py
+
+For each pattern class, generate synthetic data, run extract_features_causal, and assert the pattern is detected and confirmed at the expected bar index.
+For noise series, assert the pattern is NOT detected (or has very low confidence).
+Add at least 20 tests total.
+After this sub-phase, run:
+
+Bash
+
+python -m pytest tests/test_missing_patterns.py -v
+python scripts/validate.py
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 2.3 — ML feature extraction & classifier
+Create a new package src/backend/ml/ with:
+
+src/backend/ml/features.py — function extract_ml_features(structure_features: StructureFeatures, candidate_index: int, confirmation_index: int, candle_history: List[CandleData]) -> Dict[str, float].
+Features to include (at minimum):
+
+pattern_confidence
+quality_score
+symmetry_score
+convergence_rate
+breakout_strength
+avg_pivot_confidence
+trend_consistency
+volume_confirmation
+pattern_freshness / is_confirmed
+timeframe_minutes (1, 5, 15, 60, 240, 1440)
+n_pivots
+volatility_scale (ATR-based)
+price_range
+relative_volume (recent volume vs average)
+lag_to_confirmation (confirmation_index - candidate_index)
+One-hot or encoded structure_type.
+Optional: distance to nearest strong support/resistance level from LevelDetectorV2.
+src/backend/ml/model.py — RelevanceClassifier class wrapping sklearn.ensemble.RandomForestClassifier.
+
+Methods: fit(X, y), predict_proba(X), save(path), load(path).
+Persist trained model to data/ml_relevance_model.pkl.
+If scikit-learn is unavailable, raise a clear error.
+src/backend/ml/trainer.py — ModelTrainer class.
+
+build_training_data(synthetic_dataset, feedback_records=None):
+Convert each synthetic sample through extract_features_causal and extract_ml_features.
+Label = 1 if pattern is detected and confirmed and matches the intended class, 0 if noise or if detector produced a false pattern on a noise series.
+If user feedback records exist (feedback table from database.py), add them as additional training examples with label 1 for is_relevant=true, 0 for is_relevant=false.
+train() returns accuracy and a small classification report.
+retrain() — clears old model, rebuilds dataset, trains, saves.
+src/backend/ml/pipeline.py — optional convenience orchestrator.
+
+Config additions in src/backend/config.py:
+
+ml_min_training_samples = 200
+ml_feedback_weight = 1.0 (how much one real feedback record weighs vs. synthetic sample)
+ml_retrain_interval_hours = 24
+ml_score_threshold = 0.5 (for filtering)
+CLI script: scripts/train_ml.py that:
+
+Loads synthetic dataset.
+Loads feedback from SQLite (feedback table via database.py).
+Trains the model.
+Prints accuracy, precision, recall, F1, and feature importances.
+Saves model to data/ml_relevance_model.pkl.
+Tests: tests/test_ml_filter.py
+
+Test feature extraction on synthetic samples.
+Test that the model can be trained and achieves > 0.7 accuracy on the synthetic dataset (if the dataset is large enough).
+Test model save/load.
+After this sub-phase, run:
+
+Bash
+
+python scripts/generate_synthetic.py
+python scripts/train_ml.py
+python -m pytest tests/test_ml_filter.py -v
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 2.4 — Integrate ML filter into scanning flow
+Update src/backend/main.py and scan orchestration:
+
+When a geometric detector produces a match (in causal_patterns or type_scan mode), compute ml_features and ask RelevanceClassifier.predict_proba for a ml_score ∈ [0,1].
+Add ml_score field to WebSocket match messages and REST responses for matches.
+Add a new scan option / threshold: ml_score_threshold (default from CONFIG.ml_score_threshold). Only emit matches with ml_score >= ml_score_threshold.
+Add a global last_model_retrain timestamp; if ml_retrain_interval_hours has passed since last retrain, trigger ModelTrainer.retrain() automatically in the background during the next scan cycle (use asyncio.create_task so it does not block scanning).
+Add a new endpoint POST /api/retrain-ml that manually triggers retraining and returns the new metrics.
+Add a new endpoint GET /api/ml-status returning {model_exists, last_trained_at, n_samples, accuracy, top_features}.
+UI: Do not modify static/index.html unless trivial. Just expose the new fields in the backend; the frontend can be updated in a later phase.
+
+Backwards compatibility: If no model exists (data/ml_relevance_model.pkl not found), the system should behave exactly as before: emit all geometric matches with ml_score = 1.0 (or omit the field). Do not fail to start if the model is untrained.
+
+Tests: tests/test_ml_integration.py
+
+Test that when model is absent, matches still flow with ml_score = 1.0.
+Test that when model exists and ml_score_threshold is high, low-confidence matches are filtered.
+Test the /api/retrain-ml endpoint returns success and metrics.
+After this sub-phase, run:
+
+Bash
+
+python -m pytest -q
+python run.py  # verify app starts and causal_patterns mode emits matches with ml_score
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 2.5 — Real validation metrics with synthetic labels
+Now that you have labeled synthetic data, re-run the validation harness to produce meaningful metrics.
+
+Update src/backend/validation/runner.py:
+
+Add a method run_synthetic_validation(pattern_detector, synthetic_dataset, n_folds=5):
+For each sample, run the detector.
+Compare detected pattern type (and confirmation) to the sample label.
+Use the ML filter to compute ml_score and threshold at 0.5.
+Compute per-pattern precision, recall, F1, and overall false-positive rate.
+Compute repaint_rate as before.
+Update scripts/validate.py to optionally run synthetic validation with --synthetic flag.
+Update src/backend/validation/metrics.py:
+
+Add false_positive_rate and true_positive_rate.
+Add ml_score_distribution (histogram of ml_scores) for analysis.
+Run:
+
+Bash
+
+python scripts/generate_synthetic.py
+python scripts/validate.py --synthetic
+This should now produce non-zero precision/recall/F1 numbers. Capture them in PHASE02_REPORT.md.
+
+Final deliverables for Phase 2
+After completing all sub-phases, ensure the project contains:
+
+src/backend/synthetic.py and scripts/generate_synthetic.py.
+data/synthetic_dataset.json (or equivalent).
+New StructureType values and causal detectors for triple top/bottom, cup-and-handle, pennant, rounding bottom.
+src/backend/ml/ package with features, model, trainer, pipeline.
+data/ml_relevance_model.pkl after training.
+scripts/train_ml.py.
+Updated main.py with ml_score, /api/retrain-ml, /api/ml-status, and auto-retrain logic.
+New tests: tests/test_synthetic.py, tests/test_missing_patterns.py, tests/test_ml_filter.py, tests/test_ml_integration.py.
+All tests passing (target: ≥ 60 tests total).
+Updated UPGRADE_LOG.md.
+New PHASE02_REPORT.md in the project root containing:
+Summary of implemented changes.
+Per-pattern detection accuracy from synthetic validation.
+ML classifier accuracy/feature importances.
+Repaint rates after Phase 2 (should be 0% for causal signals, by design).
+Known issues and next steps (Phase 3: Binance WebSocket, UI, alerts, export).

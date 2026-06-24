@@ -20,6 +20,10 @@ from .candle_patterns import CandlePatternDetector, CandlePatternType
 from .fibonacci_analyzer import FibonacciAnalyzer
 from .level_detector import LevelDetector
 from .level_detector_v2 import LevelDetectorV2
+from .config import CONFIG
+from .ml.pipeline import MLPipeline
+from .ml.trainer import ModelTrainer
+from .synthetic import SyntheticChartGenerator
 
 
 logger = logging.getLogger(__name__)
@@ -67,6 +71,97 @@ level_scan_seen: set = set()
 search_level_min_touches: int = 3
 level_scan_v2_seen: set = set()
 search_level_v2_min_strength: float = 0.5
+
+# --- ML-фильтр релевантности (фаза 2.4) ---
+ml_pipeline: MLPipeline = MLPipeline(model_path=CONFIG.ml.ml_model_path)
+ml_score_threshold: float = CONFIG.ml.ml_score_threshold
+# Если модель уже есть на старте — считаем её «свежей», чтобы не запускать
+# тяжёлое переобучение на первом же тике рынка.
+last_model_retrain: Optional[datetime] = datetime.now() if ml_pipeline.model_exists else None
+_retrain_in_progress: bool = False
+# Троттлинг проверки авто-переобучения: не чаще раза в N секунд (а не каждый тик).
+_last_retrain_check: Optional[datetime] = None
+_RETRAIN_CHECK_INTERVAL_SEC: float = 300.0
+SYNTHETIC_DATASET_PATH: str = "data/synthetic_dataset.json"
+
+
+def _tf_minutes(timeframe: str) -> float:
+    """Минуты таймфрейма по строке (1m/5m/.../1d). 0 если неизвестно."""
+    base = timeframe.split("_w")[0] if "_w" in timeframe else timeframe
+    return float(CONFIG.data.timframes.get(base, 0))
+
+
+def _load_synthetic_dataset() -> list:
+    """Загружает синтетический датасет для (пере)обучения; [] при ошибке."""
+    try:
+        if not os.path.exists(SYNTHETIC_DATASET_PATH):
+            return []
+        with open(SYNTHETIC_DATASET_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Не удалось загрузить синтетический датасет: %s", exc)
+        return []
+
+
+async def _retrain_ml() -> dict:
+    """Пересобирает и переобучает ML-модель, перезагружает пайплайн.
+
+    Возвращает словарь метрик (как у ``ModelTrainer.train``) либо
+    ``{"trained": False, "reason": ...}``.
+    """
+    global last_model_retrain, ml_pipeline
+
+    dataset = _load_synthetic_dataset()
+    if not dataset:
+        return {
+            "trained": False,
+            "reason": (
+                "Синтетический датасет не найден. Выполните "
+                "scripts/generate_synthetic.py."
+            ),
+        }
+
+    try:
+        feedback = await database.get_all_feedback()
+    except Exception:  # noqa: BLE001
+        feedback = []
+
+    trainer = ModelTrainer(model_path=CONFIG.ml.ml_model_path)
+    # обучение синхронное (CPU-bound) — выполняем в пуле, чтобы не блокировать loop
+    result = await asyncio.to_thread(trainer.retrain, dataset, feedback)
+
+    last_model_retrain = datetime.now()
+    if result.get("trained"):
+        ml_pipeline.load()
+    return result
+
+
+async def _maybe_auto_retrain() -> None:
+    """Фоновое авто-переобучение по истечении ml_retrain_interval_hours."""
+    global _retrain_in_progress
+
+    if _retrain_in_progress:
+        return
+    interval_h = float(CONFIG.ml.ml_retrain_interval_hours)
+    if interval_h <= 0:
+        return
+    if last_model_retrain is not None:
+        elapsed = (datetime.now() - last_model_retrain).total_seconds()
+        if elapsed < interval_h * 3600:
+            return
+
+    _retrain_in_progress = True
+    try:
+        result = await _retrain_ml()
+        if result.get("trained"):
+            logger.info(
+                "Авто-переобучение ML завершено: accuracy=%.4f",
+                result.get("accuracy", 0.0),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Авто-переобучение ML не удалось: %s", exc)
+    finally:
+        _retrain_in_progress = False
 
 
 class ThresholdUpdate(BaseModel):
@@ -133,7 +228,19 @@ async def broadcast_message(message: dict):
 async def on_market_update(symbol: str, timeframe: str):
     """Callback when market data updates."""
     global current_reference, scan_threshold, search_mode, search_type_filter, search_candle_filter
-    
+    global _last_retrain_check
+
+    # Фоновая проверка авто-переобучения (не блокирует сканирование).
+    # Троттлим саму проверку, чтобы не плодить задачи на каждый тик рынка.
+    if not _retrain_in_progress:
+        now = datetime.now()
+        if (
+            _last_retrain_check is None
+            or (now - _last_retrain_check).total_seconds() >= _RETRAIN_CHECK_INTERVAL_SEC
+        ):
+            _last_retrain_check = now
+            asyncio.create_task(_maybe_auto_retrain())
+
     if search_mode == "type_scan":
         await on_market_update_type_scan(symbol, timeframe)
         return
@@ -246,7 +353,16 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
             elif mtf_count >= 2:
                 score = min(100.0, score * 1.04)
             score = round(score, 1)
-            
+
+            # ML-фильтр релевантности: считаем ml_score и отсекаем слабые матчи.
+            ml_score = ml_pipeline.score_features(
+                features,
+                scanner.get_candles(sym, base_tf) or [],
+                timeframe_minutes=_tf_minutes(base_tf),
+            )
+            if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+                continue
+
             await broadcast_message({
                 "type": "match",
                 "data": {
@@ -262,7 +378,8 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
                     "pattern_time": candle_time,
                     "detected_patterns": detected,
                     "volume_confirmation": round(vol_conf, 2),
-                    "mtf_confirmed": mtf_count >= 2
+                    "mtf_confirmed": mtf_count >= 2,
+                    "ml_score": round(ml_score, 4),
                 }
             })
 
@@ -299,6 +416,13 @@ async def on_market_update_causal_scan(symbol: str, timeframe: str):
     score = round(features.pattern_confidence * 100, 1)
     last_close_time = candles[-1].close_time if candles else None
 
+    # ML-фильтр релевантности.
+    ml_score = ml_pipeline.score_features(
+        features, candles, timeframe_minutes=_tf_minutes(timeframe)
+    )
+    if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+        return
+
     await broadcast_message({
         "type": "match",
         "data": {
@@ -317,6 +441,7 @@ async def on_market_update_causal_scan(symbol: str, timeframe: str):
             "is_confirmed": True,
             "candidate_time": getattr(features, 'candidate_time', None),
             "confirmation_time": getattr(features, 'confirmation_time', None),
+            "ml_score": round(ml_score, 4),
         }
     })
 
@@ -352,6 +477,13 @@ async def run_initial_causal_scan():
 
             score = round(features.pattern_confidence * 100, 1)
             last_close_time = candles[-1].close_time if candles else None
+
+            # ML-фильтр релевантности.
+            ml_score = ml_pipeline.score_features(
+                features, candles, timeframe_minutes=_tf_minutes(timeframe)
+            )
+            if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+                continue
             match_count += 1
 
             await broadcast_message({
@@ -372,6 +504,7 @@ async def run_initial_causal_scan():
                     "is_confirmed": True,
                     "candidate_time": getattr(features, 'candidate_time', None),
                     "confirmation_time": getattr(features, 'confirmation_time', None),
+                    "ml_score": round(ml_score, 4),
                 }
             })
 
@@ -1020,7 +1153,17 @@ async def run_initial_type_scan():
             
             conf = detected.get(search_type_filter, features.pattern_confidence) if secondary_match else features.pattern_confidence
             score = round(conf * 100, 1) if not primary_match else 100.0
-            
+
+            # ML-фильтр релевантности (как в live-пути type_scan): считаем
+            # ml_score и отсекаем слабые матчи при наличии обученной модели.
+            ml_score = ml_pipeline.score_features(
+                features,
+                scanner.get_candles(sym, base_tf) or [],
+                timeframe_minutes=_tf_minutes(base_tf),
+            )
+            if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+                continue
+
             match_count += 1
             await broadcast_message({
                 "type": "match",
@@ -1035,7 +1178,8 @@ async def run_initial_type_scan():
                     "normalized_line": features.normalized_line.tolist(),
                     "price_change_24h": scanner.price_change_24h.get(sym, 0),
                     "pattern_time": candle_time,
-                    "detected_patterns": detected
+                    "detected_patterns": detected,
+                    "ml_score": round(ml_score, 4),
                 }
             })
     
@@ -1616,6 +1760,43 @@ async def submit_feedback(data: FeedbackRequest):
     """Submit feedback for a match."""
     await database.save_feedback(data.match_id, data.is_relevant)
     return {"success": True}
+
+
+@app.post("/api/retrain-ml")
+async def retrain_ml():
+    """Ручной запуск переобучения ML-фильтра. Возвращает новые метрики."""
+    global _retrain_in_progress
+
+    if _retrain_in_progress:
+        return JSONResponse(
+            status_code=409,
+            content={"success": False, "reason": "Переобучение уже выполняется."},
+        )
+
+    _retrain_in_progress = True
+    try:
+        result = await _retrain_ml()
+    finally:
+        _retrain_in_progress = False
+
+    if not result.get("trained"):
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, **result},
+        )
+    return {"success": True, **result}
+
+
+@app.get("/api/ml-status")
+async def ml_status():
+    """Состояние ML-модели: наличие, дата обучения, объём, точность, признаки."""
+    status = ml_pipeline.status()
+    status["ml_score_threshold"] = ml_score_threshold
+    status["retrain_in_progress"] = _retrain_in_progress
+    status["last_model_retrain"] = (
+        last_model_retrain.isoformat() if last_model_retrain else None
+    )
+    return status
 
 
 @app.get("/api/uploads/{filename}")

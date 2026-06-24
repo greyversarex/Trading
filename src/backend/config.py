@@ -96,6 +96,21 @@ class PatternConfig:
     channel_parallel_tolerance: float = 0.05
     channel_min_conf: float = 0.45
 
+    # Missing patterns (Phase 2.2). Допуски — доли ценового диапазона либо
+    # множители volatility_scale, как у каузальных детекторов из Phase 1.
+    triple_top_tolerance: float = 0.035
+    triple_top_min_conf: float = 0.45
+    triple_bottom_tolerance: float = 0.035
+    triple_bottom_min_conf: float = 0.45
+    cup_and_handle_depth_min: float = 0.08      # мин. глубина чаши (доля диапазона)
+    cup_and_handle_handle_retrace_max: float = 0.5  # макс. откат ручки от глубины чаши
+    cup_and_handle_min_conf: float = 0.45
+    pennant_pole_min_move: float = 0.12         # мин. движение полюса (доля цены)
+    pennant_convergence_min: float = 0.15       # мин. схождение границ вымпела
+    pennant_min_conf: float = 0.45
+    rounding_bottom_curvature_min: float = 0.10  # мин. «выпуклость» дна (доля диапазона)
+    rounding_bottom_min_conf: float = 0.45
+
 
 @dataclass
 class LevelConfig:
@@ -173,6 +188,17 @@ class ValidationConfig:
 
 
 @dataclass
+class MLConfig:
+    """Параметры ML-фильтра релевантности (снижение ложных срабатываний)."""
+
+    ml_min_training_samples: int = 200   # минимум образцов для обучения
+    ml_feedback_weight: float = 1.0      # вес одной записи обратной связи vs синтетика
+    ml_retrain_interval_hours: float = 24.0  # период авто-переобучения
+    ml_score_threshold: float = 0.5      # порог фильтрации матчей по ml_score
+    ml_model_path: str = "data/ml_relevance_model.pkl"
+
+
+@dataclass
 class AppConfig:
     """Корневой агрегат всех групп настроек."""
 
@@ -184,6 +210,7 @@ class AppConfig:
     candle: CandleConfig = field(default_factory=CandleConfig)
     similarity: SimilarityConfig = field(default_factory=SimilarityConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
+    ml: MLConfig = field(default_factory=MLConfig)
 
 
 # global singleton
