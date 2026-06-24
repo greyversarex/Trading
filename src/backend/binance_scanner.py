@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 import random
 import math
@@ -8,6 +9,9 @@ from dataclasses import dataclass, field
 import aiohttp
 
 from .structure_extractor import StructureExtractor, StructureFeatures
+from .config import CONFIG
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,23 +36,9 @@ class SymbolData:
 class BinanceScanner:
     """Scans crypto market for price structures using multiple API sources."""
     
-    TIMEFRAMES = {
-        "1m": 1,
-        "5m": 5,
-        "15m": 15,
-        "1h": 60,
-        "4h": 240,
-        "1d": 1440,
-    }
-    
-    TIMEFRAME_LIMITS = {
-        "1m": 100,
-        "5m": 100,
-        "15m": 100,
-        "1h": 100,
-        "4h": 100,
-        "1d": 100,
-    }
+    TIMEFRAMES = dict(CONFIG.data.timframes)
+
+    TIMEFRAME_LIMITS = {tf: CONFIG.data.default_limit for tf in CONFIG.data.timframes}
     
     BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
     BINANCE_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/24hr"
@@ -66,8 +56,10 @@ class BinanceScanner:
     data_available: bool = False
     last_error: str = None
     
-    def __init__(self, num_symbols: int = 50):
-        self.num_symbols = min(num_symbols, 50)
+    def __init__(self, num_symbols: int = None):
+        if num_symbols is None:
+            num_symbols = CONFIG.data.num_symbols
+        self.num_symbols = min(num_symbols, CONFIG.data.num_symbols)
         self.symbols: List[str] = []
         self.symbol_data: Dict[str, SymbolData] = {}
         self.structure_extractor = StructureExtractor()
@@ -106,90 +98,6 @@ class BinanceScanner:
         }
         return prices.get(symbol, 10.0)
     
-    def _generate_realistic_candles(self, symbol: str, timeframe: str, limit: int = 100) -> List[CandleData]:
-        """Generate realistic-looking price candles with various patterns."""
-        if symbol not in self._base_prices:
-            self._base_prices[symbol] = self._get_base_price(symbol)
-        
-        base_price = self._base_prices[symbol]
-        candles = []
-        current_time = int(time.time() * 1000)
-        tf_minutes = self.TIMEFRAMES.get(timeframe, 1)
-        interval_ms = tf_minutes * 60 * 1000
-        
-        pattern_seed = hash(f"{symbol}_{timeframe}") % 100
-        
-        if pattern_seed < 15:
-            pattern_type = "triangle_up"
-        elif pattern_seed < 30:
-            pattern_type = "triangle_down"
-        elif pattern_seed < 45:
-            pattern_type = "trend_up"
-        elif pattern_seed < 60:
-            pattern_type = "trend_down"
-        elif pattern_seed < 75:
-            pattern_type = "range"
-        elif pattern_seed < 90:
-            pattern_type = "compression"
-        else:
-            pattern_type = "retest"
-        
-        price = base_price
-        volatility = base_price * 0.02
-        
-        for i in range(limit):
-            t = i / limit
-            
-            if pattern_type == "triangle_up":
-                trend = math.sin(t * 8 * math.pi) * (0.5 - t) * 0.3
-                drift = t * 0.1
-            elif pattern_type == "triangle_down":
-                trend = math.sin(t * 8 * math.pi) * t * 0.3
-                drift = -t * 0.05
-            elif pattern_type == "trend_up":
-                trend = t * 0.15 + math.sin(t * 6 * math.pi) * 0.02
-                drift = 0
-            elif pattern_type == "trend_down":
-                trend = -t * 0.15 + math.sin(t * 6 * math.pi) * 0.02
-                drift = 0
-            elif pattern_type == "range":
-                trend = math.sin(t * 8 * math.pi) * 0.08
-                drift = 0
-            elif pattern_type == "compression":
-                decay = math.exp(-t * 2)
-                trend = math.sin(t * 10 * math.pi) * 0.15 * decay
-                drift = 0
-            else:
-                trend = math.sin(t * 4 * math.pi) * 0.05
-                drift = 0.02 if t > 0.7 else 0
-            
-            noise = random.gauss(0, 0.01)
-            price_change = (trend + drift + noise) * base_price
-            
-            open_price = price
-            close_price = price + price_change * 0.3
-            
-            high_price = max(open_price, close_price) + abs(random.gauss(0, volatility * 0.5))
-            low_price = min(open_price, close_price) - abs(random.gauss(0, volatility * 0.5))
-            
-            price = close_price
-            
-            candle_time = current_time - (limit - i) * interval_ms
-            
-            candles.append(CandleData(
-                open_time=candle_time,
-                open=open_price,
-                high=high_price,
-                low=low_price,
-                close=close_price,
-                volume=random.uniform(1000, 10000) * base_price,
-                close_time=candle_time + interval_ms - 1
-            ))
-        
-        self._base_prices[symbol] = price
-        
-        return candles
-    
     async def _fetch_binance_24h_tickers(self) -> Dict[str, float]:
         """Fetch 24h price changes from Binance."""
         try:
@@ -209,7 +117,7 @@ class BinanceScanner:
                                 changes[base] = round(pct, 2)
                         return changes
         except Exception as e:
-            print(f"Binance 24h ticker error: {e}")
+            logger.warning(f"Binance 24h ticker error: {e}")
         return {}
     
     STABLECOINS = {"USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "FDUSD", "PYUSD", "GUSD", "FRAX", "USDS", "USDE"}
@@ -260,10 +168,10 @@ class BinanceScanner:
                             if self._is_valid_binance_symbol(sym) and len(symbols) < self.num_symbols:
                                 symbols.append(sym)
                         self.data_available = True
-                        print(f"Got {len(symbols)} valid Binance symbols from CoinGecko")
+                        logger.info(f"Got {len(symbols)} valid Binance symbols from CoinGecko")
                         return symbols
         except Exception as e:
-            print(f"CoinGecko API error: {e}, trying Binance tickers")
+            logger.warning(f"CoinGecko API error: {e}, trying Binance tickers")
         
         try:
             changes = await self._fetch_binance_24h_tickers()
@@ -309,10 +217,10 @@ class BinanceScanner:
                         return candles
                     else:
                         error_text = await response.text()
-                        print(f"Binance API error for {binance_symbol} {interval}: {response.status} - {error_text}")
+                        logger.warning(f"Binance API error for {binance_symbol} {interval}: {response.status} - {error_text}")
                         return []
         except Exception as e:
-            print(f"Binance klines fetch error for {symbol} {interval}: {e}")
+            logger.warning(f"Binance klines fetch error for {symbol} {interval}: {e}")
             return []
     
     _invalid_symbols: set = set()
@@ -338,10 +246,10 @@ class BinanceScanner:
                     return candles
                 else:
                     self._invalid_symbols.add(symbol)
-                    print(f"Symbol {symbol} unavailable on Binance (status {response.status}), skipping")
+                    logger.debug(f"Symbol {symbol} unavailable on Binance (status {response.status}), skipping")
         except Exception as e:
             self._invalid_symbols.add(symbol)
-            print(f"Failed to fetch {symbol}: {e}, skipping")
+            logger.warning(f"Failed to fetch {symbol}: {e}, skipping")
         return []
 
     async def fetch_candles(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
@@ -352,7 +260,7 @@ class BinanceScanner:
         if candles:
             return candles
         self._invalid_symbols.add(symbol)
-        print(f"Marking {symbol} as unavailable on Binance, skipping")
+        logger.debug(f"Marking {symbol} as unavailable on Binance, skipping")
         return []
     
     def get_structure_stats(self) -> dict:
@@ -380,15 +288,15 @@ class BinanceScanner:
 
     async def initialize_symbols(self, progress_callback=None):
         """Initialize symbol list and fetch initial candle data."""
-        print("Initializing scanner...")
+        logger.info("Initializing scanner...")
         self._invalid_symbols = set()
         self.symbols = await self.fetch_top_symbols()
-        print(f"Loaded {len(self.symbols)} symbols: {', '.join(self.symbols[:10])}...")
+        logger.info(f"Loaded {len(self.symbols)} symbols: {', '.join(self.symbols[:10])}...")
         
         for symbol in self.symbols:
             self.symbol_data[symbol] = SymbolData(symbol=symbol)
         
-        print(f"Fetching real market data from Binance API...")
+        logger.info(f"Fetching real market data from Binance API...")
         await self._update_all_candles(progress_callback=progress_callback)
         self._update_all_structures()
         
@@ -397,15 +305,15 @@ class BinanceScanner:
         
         if real_symbols:
             self.working_endpoint = "binance"
-            print(f"REAL data for {len(real_symbols)} symbols, skipped {len(skipped_symbols)} unavailable")
+            logger.info(f"REAL data for {len(real_symbols)} symbols, skipped {len(skipped_symbols)} unavailable")
             if skipped_symbols:
-                print(f"Skipped symbols (no Binance data): {', '.join(sorted(skipped_symbols))}")
+                logger.info(f"Skipped symbols (no Binance data): {', '.join(sorted(skipped_symbols))}")
         else:
             self.working_endpoint = "no_data"
-            print(f"No real market data available")
+            logger.warning(f"No real market data available")
         
         stats = self.get_structure_stats()
-        print(f"Initialized: {stats['symbols_with_data']}/{stats['total_symbols']} symbols with {stats['total_structures']} structures")
+        logger.info(f"Initialized: {stats['symbols_with_data']}/{stats['total_symbols']} symbols with {stats['total_structures']} structures")
     
     async def _update_all_candles(self, progress_callback=None):
         """Fetch candles for all symbols and timeframes using concurrent batches."""
@@ -427,7 +335,7 @@ class BinanceScanner:
                 if progress_callback:
                     await progress_callback(done, total)
                 if self._use_real_data:
-                    await asyncio.sleep(0.15)
+                    await asyncio.sleep(CONFIG.data.batch_sleep_sec)
     
     async def _update_symbol_candles_session(self, session: aiohttp.ClientSession, symbol: str, timeframe: str):
         """Update candles for a specific symbol/timeframe using shared session."""
@@ -449,9 +357,9 @@ class BinanceScanner:
                 self.symbol_data[symbol].candles[timeframe] = candles
                 self.symbol_data[symbol].last_update = time.time()
         except Exception as e:
-            print(f"Error updating {symbol} {timeframe}: {e}")
+            logger.error(f"Error updating {symbol} {timeframe}: {e}")
     
-    WINDOW_SIZES = [30, 50, 70]
+    WINDOW_SIZES = list(CONFIG.data.window_sizes)
 
     def _candle_hash(self, closes: list) -> int:
         """Quick hash of close prices to detect changes."""
@@ -513,7 +421,7 @@ class BinanceScanner:
         """Main polling loop for updating candle data."""
         while self.is_running:
             try:
-                await asyncio.sleep(60)
+                await asyncio.sleep(CONFIG.data.poll_interval_sec)
                 
                 await self._update_all_candles()
                 
@@ -524,8 +432,8 @@ class BinanceScanner:
                             await self.on_update_callback(symbol, timeframe)
                 
             except Exception as e:
-                print(f"Error in poll loop: {e}")
-                await asyncio.sleep(10)
+                logger.error(f"Error in poll loop: {e}")
+                await asyncio.sleep(CONFIG.data.error_sleep_sec)
     
     async def start(self, on_update: Optional[Callable] = None, progress_callback=None):
         """Start the scanner."""

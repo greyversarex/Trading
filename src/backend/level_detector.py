@@ -2,6 +2,8 @@ import numpy as np
 from typing import List, Tuple, Optional
 from dataclasses import dataclass, field
 
+from .config import CONFIG
+
 
 @dataclass
 class TouchPoint:
@@ -32,9 +34,9 @@ class DetectedLevel:
 
 class LevelDetector:
 
-    def __init__(self, deviation_pct: float = 0.15, min_touches: int = 3):
-        self.deviation_pct = deviation_pct
-        self.min_touches = min_touches
+    def __init__(self, deviation_pct: float = None, min_touches: int = None):
+        self.deviation_pct = deviation_pct if deviation_pct is not None else CONFIG.level.deviation_pct
+        self.min_touches = min_touches if min_touches is not None else CONFIG.level.min_touches
 
     def detect_levels(
         self,
@@ -113,7 +115,7 @@ class LevelDetector:
             return []
 
         tolerance = price_range * (self.deviation_pct / 100.0)
-        breakout_threshold = price_range * 0.003
+        breakout_threshold = price_range * CONFIG.level.breakout_threshold_factor
 
         candidates: List[DetectedLevel] = []
 
@@ -305,9 +307,9 @@ class LevelDetector:
                 val_k = k.slope * mid + k.intercept
 
                 price_range = abs(k.intercept) + 1e-10
-                if abs(val_lv - val_k) / price_range < 0.005:
+                if abs(val_lv - val_k) / price_range < CONFIG.level.dedup_rel_dist:
                     slope_diff = abs(lv.slope - k.slope)
-                    if slope_diff < 0.01:
+                    if slope_diff < CONFIG.level.dedup_slope_diff:
                         is_dup = True
                         break
 

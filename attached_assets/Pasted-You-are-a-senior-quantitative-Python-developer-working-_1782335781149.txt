@@ -1,0 +1,315 @@
+You are a senior quantitative Python developer working on a FastAPI crypto chart scanner. The project is described in PROJECT_AUDIT.md. The user wants to push pattern/level detection to maximum accuracy. This task is Phase 0 + Phase 1 of a multi-phase upgrade. Work incrementally, test each sub-phase, and produce reports.
+
+Global constraints
+Use Python 3.11 + FastAPI + the existing dependencies (numpy, scipy, scikit-learn, aiohttp, etc.).
+Do not break the existing REST API or WebSocket message shape unless explicitly told below. New fields are allowed; existing fields must remain.
+Do not modify static/index.html unless absolutely necessary for new endpoints; add new UI features later.
+Keep the app runnable with python run.py after each sub-phase.
+Write clean, typed code with docstrings.
+Use aiosqlite for any new persistent tables if needed.
+Create an UPGRADE_LOG.md in the project root documenting every change.
+Sub-phase 0.1 — Centralize configuration
+Create src/backend/config.py containing dataclasses with all tunable parameters currently hard-coded in the project. At minimum include:
+
+Python
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+@dataclass
+class DataConfig:
+    timframes: Dict[str, int] = field(default_factory=lambda: {"1m":1, "5m":5, "15m":15, "1h":60, "4h":240, "1d":1440})
+    default_limit: int = 100
+    window_sizes: List[int] = field(default_factory=lambda: [30, 50, 70])
+    num_symbols: int = 50
+    poll_interval_sec: float = 60.0
+    error_sleep_sec: float = 10.0
+    batch_sleep_sec: float = 0.15
+
+@dataclass
+class StructureConfig:
+    resample_points: int = 100
+    num_pivots: int = 10
+    min_quality: float = 0.35          # raised from 0.15
+    use_ohlc_for_pivots: bool = True   # NEW
+    recency_weight_enabled: bool = False  # disable old recency bias
+
+    # Pivot detection
+    zigzag_atr_mult_min: float = 1.5
+    zigzag_atr_mult_max: float = 3.5
+    zigzag_min_swing_floor: float = 0.02
+    prominence_min: float = 0.08
+    prominence_max: float = 0.25
+    prominence_base: float = 0.12
+    multi_scale_order: int = 3
+
+    # Confirmation (NEW)
+    confirmation_bars: int = 1          # bars after breakout to confirm
+    confirmation_retreat_fraction: float = 0.5  # how much of breakout can be retraced without invalidation
+
+@dataclass
+class PatternConfig:
+    # thresholds are fractions of ATR or price range, not fixed normalized values
+    double_top_tolerance: float = 0.03
+    double_top_min_conf: float = 0.45
+    double_bottom_min_conf: float = 0.45
+
+    hs_shoulder_diff_max: float = 0.18
+    hs_head_prominence_min: float = 0.06
+    hs_shoulder_head_ratio_min: float = 0.4
+    hs_shoulder_head_ratio_max: float = 0.95
+    hs_min_conf: float = 0.5
+
+    flag_min_conf: float = 0.5
+    flag_breakout_retreat: float = 0.03
+
+    wedge_convergence_min: float = 0.15
+    wedge_fit_min: float = 0.7
+    wedge_min_conf: float = 0.45
+
+    triangle_convergence_min: float = 0.15
+    triangle_convergence_max: float = 0.95
+    triangle_norm_conv_rate_max: float = 3.0
+    triangle_fit_min: float = 0.75
+    triangle_min_conf: float = 0.45
+
+    trend_move_threshold: float = 0.15
+    swing_ratio_threshold: float = 0.5
+
+    # Channel (NEW)
+    channel_fit_min: float = 0.80
+    channel_parallel_tolerance: float = 0.05
+    channel_min_conf: float = 0.45
+
+@dataclass
+class LevelConfig:
+    deviation_pct: float = 0.15
+    min_touches: int = 3
+    breakout_threshold_factor: float = 0.003
+    dedup_rel_dist: float = 0.005
+    dedup_slope_diff: float = 0.01
+    # NEW
+    use_ransac: bool = True
+    ransac_min_samples: int = 2
+    ransac_residual_threshold_factor: float = 0.5  # * ATR
+    use_dbscan: bool = True
+    dbscan_eps_factor: float = 0.5  # * ATR
+    dbscan_min_samples: int = 2
+    use_volume_profile: bool = True
+    volume_profile_bins: int = 20
+    use_round_numbers: bool = True
+    round_number_step_factor: float = 1.0  # * ATR
+
+@dataclass
+class FiboConfig:
+    touch_tolerance: float = 0.003
+    min_swing_pct: float = 0.02
+
+@dataclass
+class CandleConfig:
+    max_age: int = 10
+    volume_floor: float = 0.6
+    lookback: int = 5
+
+@dataclass
+class SimilarityConfig:
+    line_weight: float = 0.25
+    pivot_weight: float = 0.20
+    distance_weight: float = 0.10
+    shape_weight: float = 0.25
+    slope_weight: float = 0.10
+    geometry_weight: float = 0.10
+    dtw_band_window: int = 10
+    type_sim_same: float = 1.0
+    type_sim_same_category: float = 0.60
+    type_sim_mismatch: float = 0.35
+    type_sim_opposite: float = 0.15
+    pattern_overlap_bonus_cap: float = 0.30
+    mirror_penalty_opposite: float = 0.60
+    mirror_penalty_default: float = 0.85
+    mirror_penalty_consolidation: float = 0.90
+    dedup_score_window: float = 5.0
+    mtf_bonus_2tf: float = 1.04
+    mtf_bonus_3tf: float = 1.08
+
+@dataclass
+class ValidationConfig:
+    test_symbols: List[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"])
+    test_timeframes: List[str] = field(default_factory=lambda: ["15m", "1h", "4h"])
+    horizon_candles: int = 5
+    max_history_limit: int = 500
+
+@dataclass
+class AppConfig:
+    data: DataConfig = field(default_factory=DataConfig)
+    structure: StructureConfig = field(default_factory=StructureConfig)
+    pattern: PatternConfig = field(default_factory=PatternConfig)
+    level: LevelConfig = field(default_factory=LevelConfig)
+    fibo: FiboConfig = field(default_factory=FiboConfig)
+    candle: CandleConfig = field(default_factory=CandleConfig)
+    similarity: SimilarityConfig = field(default_factory=SimilarityConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
+
+# global singleton
+CONFIG = AppConfig()
+Then refactor:
+
+src/backend/structure_extractor.py — replace all magic numbers with CONFIG.structure.* or CONFIG.pattern.* references.
+src/backend/level_detector.py — replace magic numbers with CONFIG.level.*.
+src/backend/candle_patterns.py — replace magic numbers with CONFIG.candle.*.
+src/backend/fibonacci_analyzer.py — replace magic numbers with CONFIG.fibo.*.
+src/backend/similarity_matcher.py — replace magic numbers with CONFIG.similarity.*.
+src/backend/binance_scanner.py — replace magic numbers with CONFIG.data.*.
+Keep backward-compatible behavior except where the config explicitly changes a default (e.g., min_quality raised to 0.35, recency bias disabled). These changes are intentional and should take effect.
+
+After this sub-phase, run python -c "from src.backend.config import CONFIG; print(CONFIG)" and verify no import errors. Append a note to UPGRADE_LOG.md.
+
+Sub-phase 0.2 — Validation / backtesting harness
+Create a new package src/backend/validation/ with files:
+
+src/backend/validation/__init__.py
+src/backend/validation/history.py — functions to fetch historical candles via Binance REST for a symbol/timeframe/limit. Return List[CandleData] using the existing CandleData dataclass.
+src/backend/validation/metrics.py — compute:
+precision, recall, f1 for a set of detected events vs. labeled events.
+repaint_rate(detected_events_series) — percentage of signals that disappear on the next poll. Compute by running the detector on rolling windows and comparing.
+average_latency — candles from candidate to confirmation.
+src/backend/validation/runner.py — ValidationRunner class:
+run_pattern_validation(symbol, timeframe, detector, limit=500) — walks history bar-by-bar, collects confirmed and unconfirmed signals, saves JSON results.
+run_multi_symbol(detector, symbols=None, timeframes=None) — loops over defaults from CONFIG.validation.
+src/backend/validation/labels.py — simple LabelStore using SQLite table validation_labels (columns: id, symbol, timeframe, pattern_type, start_time, end_time, label, created_at). This will later be used for ML feedback.
+Add a CLI script scripts/validate.py that:
+
+Imports CONFIG and the validation runner.
+Runs structure detection on the configured test symbols/timeframes.
+Prints precision/recall/repaint metrics per pattern type and timeframe.
+Saves results to data/validation_results.json.
+After this sub-phase, run python scripts/validate.py and verify it completes without errors (even if metrics are low at this stage). Append to UPGRADE_LOG.md.
+
+Sub-phase 1.1 — Causal (non-repainting) pattern detection
+In src/backend/structure_extractor.py, keep the existing StructureExtractor class but add a new class CausalStructureExtractor or extend the existing one with a new method extract_features_causal(candles). Requirements:
+
+The detector must only use information up to and including the current closed bar. It may look back, but not forward.
+For every pattern candidate, compute a confirmation_index and confirmation_time:
+For patterns with a breakout line/neckline/channel edge (double top/bottom, H&S, triangle, wedge, flag, channel): after the pattern is formed, wait for a close beyond the breakout level. Then require confirmation_bars additional bars whose close does not retreat more than confirmation_retreat_fraction of the breakout distance back through the level. If any bar violates, invalidate the candidate.
+For trend/impulse/squeeze: confirmation is after a close in the direction of the move and a follow-through bar.
+For range/compression/accumulation: confirmation is after a clear close outside the range boundaries.
+The returned StructureFeatures must include:
+candidate_index: int — bar where pattern was first recognized.
+candidate_time: int — open_time of candidate bar.
+confirmation_index: int — bar where pattern was confirmed (or -1 if not yet confirmed).
+confirmation_time: int — open_time of confirmation bar (or -1).
+is_confirmed: bool.
+is_invalidated: bool (if breakout failed before confirmation).
+The existing is_active / pattern_freshness fields can be derived from is_confirmed and is_invalidated for backward compatibility:
+is_active = is_confirmed and not is_invalidated.
+pattern_freshness = 1.0 if is_confirmed else 0.5 if not is_invalidated else 0.0.
+Update the StructureType enum to include new values:
+
+ascending_triangle, descending_triangle, symmetrical_triangle (keep triangle as a fallback category).
+channel_up, channel_down, horizontal_channel.
+Keep all existing values for compatibility.
+Update classify_structure to:
+
+Return the specific triangle subtype when possible.
+Detect channel patterns using parallel trendlines fitted to pivot highs and lows (fit quality ≥ CONFIG.pattern.channel_fit_min, parallelism tolerance ≤ CONFIG.pattern.channel_parallel_tolerance).
+Update main.py:
+
+Add a new scan mode option causal_patterns to the scan orchestrator. When this mode is active, use extract_features_causal and only emit/broadcast matches where is_confirmed=True.
+Keep existing scan modes unchanged.
+In WebSocket match messages, add fields: is_confirmed, confirmation_time, candidate_time. Existing UI will ignore them, but they are available for future UI updates.
+Add unit tests in tests/test_causal_detection.py:
+
+Generate synthetic CandleData lists with known double-top, H&S, triangle, and channel patterns.
+Assert that the detector confirms the pattern at the expected bar index and does not confirm early or repaint.
+After this sub-phase, run:
+
+Bash
+
+python -m pytest tests/test_causal_detection.py -v
+python scripts/validate.py
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 1.2 — ATR-adaptive thresholds
+Modify the pivot and pattern detection logic in src/backend/structure_extractor.py so that all tolerance thresholds are scaled by the recent volatility of the symbol, not fixed on the normalized [0,1] line.
+
+Requirements:
+
+Compute atr = average_true_range(highs, lows, closes, period=14) on the raw price series before normalization.
+Compute price_range = max(close) - min(close) over the window.
+Use a volatility_scale = max(atr, price_range * 0.01) as a base unit.
+Replace fixed tolerances like the double-top 0.03 with CONFIG.pattern.double_top_tolerance * price_range or k * volatility_scale, whichever is more appropriate for the specific pattern. The config values remain as fractions of the range; the code applies them to the actual range.
+For H&S shoulder/head ratios, compare absolute price differences, not normalized values.
+For triangle/wedge fit, use raw-price residuals divided by volatility_scale.
+The normalized line can still be used for shape similarity, but detection must use raw price levels for geometry.
+Add a helper compute_volatility_scale(highs, lows, closes) in src/backend/structure_extractor.py or a new src/backend/volatility.py.
+
+Update unit tests to check that:
+
+A synthetic pattern with high volatility is detected when ATR-adaptive thresholds are used.
+The same pattern shape with low volatility is not lost due to overly strict fixed thresholds.
+After this sub-phase, run:
+
+Bash
+
+python -m pytest tests/ -v
+python scripts/validate.py
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 1.3 — Robust levels and trendlines
+Create a new class src/backend/level_detector_v2.py named LevelDetectorV2. Keep LevelDetector in level_detector.py unchanged for compatibility, but LevelDetectorV2 should be the default used by new scan modes.
+
+LevelDetectorV2.detect_levels(highs, lows, closes, volumes) must produce:
+
+support_levels: list of horizontal support zones, each with price, strength (0-1), num_touches, first_touch_time, last_touch_time, type = "support".
+resistance_levels: analogous.
+trendlines: list of diagonal lines, each with slope (price per bar), intercept, type ("support_trendline" or "resistance_trendline"), strength (0-1), touches (list of indices), start_idx, end_idx.
+Implementation details:
+
+Pivots: use local fractal extrema from OHLC (same as before but with configurable order).
+Horizontal zones: run DBSCAN (sklearn.cluster.DBSCAN) on pivot prices with eps = CONFIG.level.dbscan_eps_factor * volatility_scale. Each cluster is a level; strength is proportional to cluster size, recency, and total volume at touches.
+Diagonal lines: for support, fit lines through pairs/triples of low pivots using RANSAC or Theil-Sen regression. Keep the line only if it has ≥ CONFIG.level.min_touches inliers within CONFIG.level.ransac_residual_threshold_factor * volatility_scale. Parallelism for channels is checked via relative slope difference.
+Volume profile: build a histogram of close weighted by volume over CONFIG.level.volume_profile_bins. Add POC (point of control) and value area high/low as levels if they are not already covered by DBSCAN clusters.
+Round numbers: generate candidate prices near current price with step = CONFIG.level.round_number_step_factor * volatility_scale, rounded to a "nice" number. Add as a level only if it has at least one actual touch within 0.5 * volatility_scale.
+Deduplication: merge levels that are within 0.3 * volatility_scale of each other, summing strength.
+Update main.py:
+
+Add /api/levels-v2/{symbol}/{timeframe} endpoint returning JSON with support, resistance, trendlines.
+Add a new scan mode level_scan_v2 that uses LevelDetectorV2 and broadcasts matched levels with strength ≥ 0.5.
+Add tests tests/test_level_detector_v2.py with synthetic data containing:
+
+A clear horizontal support level touched 4 times.
+A diagonal support trendline.
+A channel with parallel support/resistance lines.
+After this sub-phase, run:
+
+Bash
+
+python -m pytest tests/ -v
+python run.py  # verify app starts and /api/levels-v2/BTCUSDT/1h returns valid JSON
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 1.4 — Logging and cleanup
+Replace print() statements in binance_scanner.py, main.py, and structure_extractor.py with Python logging using module-level loggers. Use levels: INFO for scan start/stop, DEBUG for per-symbol details, WARNING for errors, ERROR for failures.
+Add a logging.basicConfig setup in run.py.
+Remove the dormant synthetic-candle generator _generate_realistic_candles from binance_scanner.py or, if it is used anywhere, wrap it with an explicit is_synthetic flag and a warning log. If it is truly unused, delete it to avoid confusion.
+Remove the retest value from UI scan buttons if it is still present (it is never emitted by the detector). This is optional; if UI is hard to change, at least add a backend comment that it is unused.
+After this sub-phase, run the app and verify logs look clean.
+
+Final deliverables for this prompt
+After completing all sub-phases, ensure the project contains:
+
+src/backend/config.py with all dataclasses.
+src/backend/validation/ package with history, metrics, runner, labels.
+scripts/validate.py CLI.
+Updated src/backend/structure_extractor.py with causal detection and ATR-adaptive thresholds.
+Updated StructureType enum with triangle subtypes and channel types.
+src/backend/level_detector_v2.py with DBSCAN, RANSAC/Theil-Sen, volume profile, round numbers.
+New /api/levels-v2/{symbol}/{timeframe} endpoint and level_scan_v2 mode.
+tests/test_causal_detection.py and tests/test_level_detector_v2.py passing.
+UPGRADE_LOG.md with a summary of what changed and results from scripts/validate.py.
+A new file PHASE01_REPORT.md in the project root containing:
+What was implemented.
+Any tests that passed/failed.
+Metrics from scripts/validate.py (even if preliminary).
+Known issues or next steps for Phase 2.
+After you finish, tell the user to copy PHASE01_REPORT.md and UPGRADE_LOG.md back to the AI assistant so the next phase can be planned.

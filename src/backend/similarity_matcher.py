@@ -5,6 +5,7 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 from .structure_extractor import StructureFeatures, StructureType
+from .config import CONFIG
 
 
 @dataclass
@@ -33,6 +34,10 @@ CONSOLIDATION_TYPES = {
     StructureType.RANGE, StructureType.ACCUMULATION,
     StructureType.SQUEEZE_UP, StructureType.SQUEEZE_DOWN,
     StructureType.RISING_WEDGE, StructureType.FALLING_WEDGE,
+    StructureType.ASCENDING_TRIANGLE, StructureType.DESCENDING_TRIANGLE,
+    StructureType.SYMMETRICAL_TRIANGLE,
+    StructureType.CHANNEL_UP, StructureType.CHANNEL_DOWN,
+    StructureType.HORIZONTAL_CHANNEL,
 }
 
 OPPOSITE_PAIRS = {
@@ -43,6 +48,8 @@ OPPOSITE_PAIRS = {
     (StructureType.HEAD_SHOULDERS, StructureType.INV_HEAD_SHOULDERS),
     (StructureType.SQUEEZE_UP, StructureType.SQUEEZE_DOWN),
     (StructureType.RISING_WEDGE, StructureType.FALLING_WEDGE),
+    (StructureType.ASCENDING_TRIANGLE, StructureType.DESCENDING_TRIANGLE),
+    (StructureType.CHANNEL_UP, StructureType.CHANNEL_DOWN),
 }
 
 MIN_CONFIDENCE_THRESHOLDS = {
@@ -66,17 +73,23 @@ MIN_CONFIDENCE_THRESHOLDS = {
     StructureType.RANGE: 0.35,
     StructureType.ACCUMULATION: 0.30,
     StructureType.RETEST: 0.35,
+    StructureType.ASCENDING_TRIANGLE: 0.40,
+    StructureType.DESCENDING_TRIANGLE: 0.40,
+    StructureType.SYMMETRICAL_TRIANGLE: 0.40,
+    StructureType.CHANNEL_UP: 0.45,
+    StructureType.CHANNEL_DOWN: 0.45,
+    StructureType.HORIZONTAL_CHANNEL: 0.40,
 }
 
 
 class SimilarityMatcher:
     def __init__(self):
-        self.line_weight = 0.25
-        self.pivot_weight = 0.20
-        self.distance_weight = 0.10
-        self.shape_weight = 0.25
-        self.slope_weight = 0.10
-        self.geometry_weight = 0.10
+        self.line_weight = CONFIG.similarity.line_weight
+        self.pivot_weight = CONFIG.similarity.pivot_weight
+        self.distance_weight = CONFIG.similarity.distance_weight
+        self.shape_weight = CONFIG.similarity.shape_weight
+        self.slope_weight = CONFIG.similarity.slope_weight
+        self.geometry_weight = CONFIG.similarity.geometry_weight
 
     def mirror_features(self, features: StructureFeatures) -> StructureFeatures:
         mirrored_line = 1.0 - features.normalized_line
@@ -101,6 +114,12 @@ class SimilarityMatcher:
             StructureType.BEAR_FLAG: StructureType.BULL_FLAG,
             StructureType.RISING_WEDGE: StructureType.FALLING_WEDGE,
             StructureType.FALLING_WEDGE: StructureType.RISING_WEDGE,
+            StructureType.ASCENDING_TRIANGLE: StructureType.DESCENDING_TRIANGLE,
+            StructureType.DESCENDING_TRIANGLE: StructureType.ASCENDING_TRIANGLE,
+            StructureType.CHANNEL_UP: StructureType.CHANNEL_DOWN,
+            StructureType.CHANNEL_DOWN: StructureType.CHANNEL_UP,
+            StructureType.SYMMETRICAL_TRIANGLE: StructureType.SYMMETRICAL_TRIANGLE,
+            StructureType.HORIZONTAL_CHANNEL: StructureType.HORIZONTAL_CHANNEL,
         }
         mirrored_type = type_mirror_map.get(features.structure_type, features.structure_type)
         mirrored_slopes = [-s for s in features.pivot_slopes] if features.pivot_slopes else []
@@ -136,7 +155,9 @@ class SimilarityMatcher:
             volume_confirmation=features.volume_confirmation
         )
 
-    def _dtw_distance(self, s1: np.ndarray, s2: np.ndarray, window: int = 10) -> float:
+    def _dtw_distance(self, s1: np.ndarray, s2: np.ndarray, window: int = None) -> float:
+        if window is None:
+            window = CONFIG.similarity.dtw_band_window
         n, m = len(s1), len(s2)
         if n == 0 or m == 0:
             return 1.0
@@ -317,7 +338,7 @@ class SimilarityMatcher:
         if not shared:
             return 0.0
         best_overlap = max(min(p1[k], p2[k]) for k in shared)
-        return min(0.3, best_overlap * 0.4)
+        return min(CONFIG.similarity.pattern_overlap_bonus_cap, best_overlap * 0.4)
 
     def compare_shape(self, features1: StructureFeatures,
                      features2: StructureFeatures) -> float:
@@ -333,13 +354,13 @@ class SimilarityMatcher:
         t1, t2 = features1.structure_type, features2.structure_type
 
         if t1 == t2:
-            type_sim = 1.0
+            type_sim = CONFIG.similarity.type_sim_same
         elif self._same_category(t1, t2):
-            type_sim = 0.60
+            type_sim = CONFIG.similarity.type_sim_same_category
         elif self._are_opposites(t1, t2):
-            type_sim = 0.15
+            type_sim = CONFIG.similarity.type_sim_opposite
         else:
-            type_sim = 0.35
+            type_sim = CONFIG.similarity.type_sim_mismatch
 
         overlap = self._pattern_overlap_bonus(features1, features2)
         type_sim = min(1.0, type_sim + overlap)
@@ -406,11 +427,11 @@ class SimilarityMatcher:
             t1 = reference.structure_type
             t2 = candidate.structure_type
             if self._are_opposites(t1, t2):
-                raw_mirror *= 0.85
+                raw_mirror *= CONFIG.similarity.mirror_penalty_opposite
             elif t1 in CONSOLIDATION_TYPES and t2 in CONSOLIDATION_TYPES:
-                raw_mirror *= 0.95
+                raw_mirror *= CONFIG.similarity.mirror_penalty_consolidation
             else:
-                raw_mirror *= 0.90
+                raw_mirror *= CONFIG.similarity.mirror_penalty_default
 
             mirror_score = raw_mirror
 
@@ -522,9 +543,9 @@ class SimilarityMatcher:
             base_tf = m.timeframe.split("_w")[0] if "_w" in m.timeframe else m.timeframe
             tf_count = len(symbol_tfs.get(m.symbol, set()))
             if tf_count >= 3:
-                m.similarity_score = min(99.99, m.similarity_score * 1.08)
+                m.similarity_score = min(99.99, m.similarity_score * CONFIG.similarity.mtf_bonus_3tf)
             elif tf_count >= 2:
-                m.similarity_score = min(99.99, m.similarity_score * 1.04)
+                m.similarity_score = min(99.99, m.similarity_score * CONFIG.similarity.mtf_bonus_2tf)
             m.similarity_score = round(m.similarity_score, 2)
         return matches
 
@@ -547,7 +568,7 @@ class SimilarityMatcher:
                             existing[idx] = m
                         dominated = True
                         break
-                    if abs(m.similarity_score - ex.similarity_score) < 5.0:
+                    if abs(m.similarity_score - ex.similarity_score) < CONFIG.similarity.dedup_score_window:
                         dominated = True
                         break
                 if not dominated:

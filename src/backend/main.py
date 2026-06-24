@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -18,7 +19,10 @@ from .database import Database
 from .candle_patterns import CandlePatternDetector, CandlePatternType
 from .fibonacci_analyzer import FibonacciAnalyzer
 from .level_detector import LevelDetector
+from .level_detector_v2 import LevelDetectorV2
 
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Chart Structure Scanner")
 
@@ -38,6 +42,7 @@ database = Database()
 candle_detector = CandlePatternDetector()
 fibo_analyzer = FibonacciAnalyzer()
 level_detector = LevelDetector()
+level_detector_v2 = LevelDetectorV2()
 
 active_websockets: List[WebSocket] = []
 current_reference: Optional[StructureFeatures] = None
@@ -47,7 +52,7 @@ is_scanning: bool = False
 scan_task: Optional[asyncio.Task] = None
 _init_task: Optional[asyncio.Task] = None
 _pending_initial_scan: Optional[asyncio.Task] = None
-search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", "candle_scan", or "fibo_scan"
+search_mode: str = "preset"  # "preset", "uploaded", "manual", "type_scan", "candle_scan", "fibo_scan", "level_scan", "level_scan_v2", or "causal_patterns"
 search_pattern_type: Optional[str] = None
 search_type_filter: Optional[str] = None
 search_candle_filter: Optional[str] = None
@@ -56,9 +61,12 @@ search_fibo_min_touches: int = 3
 search_fibo_min_quality: float = 30.0
 type_scan_seen: set = set()
 candle_scan_seen: set = set()
+causal_scan_seen: set = set()
 fibo_scan_seen: set = set()
 level_scan_seen: set = set()
 search_level_min_touches: int = 3
+level_scan_v2_seen: set = set()
+search_level_v2_min_strength: float = 0.5
 
 
 class ThresholdUpdate(BaseModel):
@@ -85,6 +93,7 @@ class StartScanRequest(BaseModel):
     fibo_min_touches: int = 3
     fibo_min_quality: float = 30.0
     level_min_touches: int = 3
+    level_v2_min_strength: float = 0.5
 
 
 class ManualPivot(BaseModel):
@@ -139,6 +148,14 @@ async def on_market_update(symbol: str, timeframe: str):
     
     if search_mode == "level_scan":
         await on_market_update_level_scan(symbol, timeframe)
+        return
+    
+    if search_mode == "level_scan_v2":
+        await on_market_update_level_scan_v2(symbol, timeframe)
+        return
+    
+    if search_mode == "causal_patterns":
+        await on_market_update_causal_scan(symbol, timeframe)
         return
     
     if current_reference is None:
@@ -248,6 +265,120 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
                     "mtf_confirmed": mtf_count >= 2
                 }
             })
+
+
+async def on_market_update_causal_scan(symbol: str, timeframe: str):
+    """Callback for causal (non-repainting) pattern scanning.
+
+    Запускает причинно-следственную детекцию на сырых свечах и
+    публикует только ПОДТВЕРЖДЁННЫЕ паттерны (is_confirmed=True),
+    исключая перерисовку (repaint).
+    """
+    global search_type_filter, causal_scan_seen, search_timeframe_filter
+
+    if search_timeframe_filter and timeframe != search_timeframe_filter:
+        return
+
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles or len(candles) < 20:
+        return
+
+    features = structure_extractor.extract_features_causal(candles)
+    if features is None or not getattr(features, 'is_confirmed', False):
+        return
+
+    type_value = features.structure_type.value
+    if search_type_filter and search_type_filter != "all" and type_value != search_type_filter:
+        return
+
+    key = f"{symbol}_{timeframe}_{type_value}_{getattr(features, 'confirmation_time', '')}"
+    if key in causal_scan_seen:
+        return
+    causal_scan_seen.add(key)
+
+    score = round(features.pattern_confidence * 100, 1)
+    last_close_time = candles[-1].close_time if candles else None
+
+    await broadcast_message({
+        "type": "match",
+        "data": {
+            "match_id": None,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "similarity_score": score,
+            "structure_type": type_value,
+            "timestamp": datetime.now().isoformat(),
+            "is_mirrored": False,
+            "normalized_line": features.normalized_line.tolist(),
+            "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+            "pattern_time": getattr(features, 'confirmation_time', None) or last_close_time,
+            "detected_patterns": getattr(features, 'detected_patterns', {}) or {},
+            "volume_confirmation": round(getattr(features, 'volume_confirmation', 0.5), 2),
+            "is_confirmed": True,
+            "candidate_time": getattr(features, 'candidate_time', None),
+            "confirmation_time": getattr(features, 'confirmation_time', None),
+        }
+    })
+
+
+async def run_initial_causal_scan():
+    """Initial causal scan across all symbols/timeframes - emits only confirmed patterns."""
+    global search_type_filter, causal_scan_seen, search_timeframe_filter
+
+    match_count = 0
+
+    for symbol in list(scanner.symbol_data.keys()):
+        data = scanner.symbol_data[symbol]
+        for timeframe, candles in data.candles.items():
+            if "_w" in timeframe:
+                continue
+            if search_timeframe_filter and timeframe != search_timeframe_filter:
+                continue
+            if not candles or len(candles) < 20:
+                continue
+
+            features = structure_extractor.extract_features_causal(candles)
+            if features is None or not getattr(features, 'is_confirmed', False):
+                continue
+
+            type_value = features.structure_type.value
+            if search_type_filter and search_type_filter != "all" and type_value != search_type_filter:
+                continue
+
+            key = f"{symbol}_{timeframe}_{type_value}_{getattr(features, 'confirmation_time', '')}"
+            if key in causal_scan_seen:
+                continue
+            causal_scan_seen.add(key)
+
+            score = round(features.pattern_confidence * 100, 1)
+            last_close_time = candles[-1].close_time if candles else None
+            match_count += 1
+
+            await broadcast_message({
+                "type": "match",
+                "data": {
+                    "match_id": None,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "similarity_score": score,
+                    "structure_type": type_value,
+                    "timestamp": datetime.now().isoformat(),
+                    "is_mirrored": False,
+                    "normalized_line": features.normalized_line.tolist(),
+                    "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+                    "pattern_time": getattr(features, 'confirmation_time', None) or last_close_time,
+                    "detected_patterns": getattr(features, 'detected_patterns', {}) or {},
+                    "volume_confirmation": round(getattr(features, 'volume_confirmation', 0.5), 2),
+                    "is_confirmed": True,
+                    "candidate_time": getattr(features, 'candidate_time', None),
+                    "confirmation_time": getattr(features, 'confirmation_time', None),
+                }
+            })
+
+    await broadcast_message({
+        "type": "initial_scan_complete",
+        "data": {"total_matches": match_count}
+    })
 
 
 async def on_market_update_candle_scan(symbol: str, timeframe: str):
@@ -597,6 +728,177 @@ def _level_to_match_data(lv, symbol, timeframe, candles):
     }
 
 
+def _level_v2_to_match_data(lv, symbol, timeframe, candles, is_trendline=False):
+    """Преобразует уровень/трендлайн LevelDetectorV2 в формат WS-сообщения match.
+
+    Переиспользует существующую форму ``level_data`` (line_type, slope, intercept,
+    line_points, touches и т.д.), чтобы фронтенд отрисовывал V2-уровни без правок.
+    """
+    n = len(candles)
+    closes = [c.close for c in candles]
+    min_c, max_c = min(closes), max(closes)
+    rng = max_c - min_c if max_c > min_c else 1.0
+    normalized_line = [(c - min_c) / rng for c in closes]
+    candle_time = candles[-1].open_time if candles else None
+
+    if is_trendline:
+        slope = lv["slope"]
+        intercept = lv["intercept"]
+        start_idx = max(0, min(lv["start_idx"], n - 1))
+        end_idx = max(0, min(lv["end_idx"], n - 1))
+        line_type = "support" if lv["type"] == "support_trendline" else "resistance"
+        touches = [{"candle_index": int(i), "price": round(slope * i + intercept, 8),
+                    "is_high": line_type == "resistance"} for i in lv["touches"]]
+        touch_count = len(lv["touches"])
+        first_t, last_t = (lv["touches"][0], lv["touches"][-1]) if lv["touches"] else (start_idx, end_idx)
+    else:
+        slope = 0.0
+        intercept = lv["price"]
+        start_idx, end_idx = 0, n - 1
+        line_type = lv["type"]
+        touches = []
+        touch_count = lv["num_touches"]
+        first_t, last_t = lv["first_touch_time"], lv["last_touch_time"]
+
+    line_points = []
+    for idx in [start_idx, end_idx]:
+        price_at = slope * idx + intercept
+        line_points.append({"index": int(idx), "price": round(price_at, 8)})
+
+    slope_label = "горизонтальный"
+    if abs(slope) > 1e-9:
+        slope_label = "восходящий" if slope > 0 else "нисходящий"
+
+    quality_score = round(lv["strength"] * 100, 1)
+
+    return {
+        "match_id": None,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "similarity_score": quality_score,
+        "structure_type": f"level_{line_type}",
+        "timestamp": datetime.now().isoformat(),
+        "is_mirrored": False,
+        "normalized_line": normalized_line,
+        "price_change_24h": scanner.price_change_24h.get(symbol, 0),
+        "pattern_time": candle_time,
+        "is_level": True,
+        "is_level_v2": True,
+        "level_data": {
+            "line_type": line_type,
+            "slope": round(slope, 10),
+            "intercept": round(intercept, 8),
+            "touch_count": touch_count,
+            "quality_score": quality_score,
+            "strength": lv["strength"],
+            "price_at_last": round(slope * (n - 1) + intercept, 8),
+            "touches": touches,
+            "line_points": line_points,
+            "slope_label": slope_label,
+            "is_trendline": is_trendline,
+            "source": lv.get("source", "trendline"),
+            "first_touch_time": first_t,
+            "last_touch_time": last_t,
+        },
+    }
+
+
+def _detect_levels_v2_for(symbol, timeframe, candles):
+    """Запускает LevelDetectorV2 на свечах и возвращает (support, resistance, trendlines)."""
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+    closes = [c.close for c in candles]
+    volumes = [c.volume for c in candles]
+    times = [c.open_time for c in candles]
+    res = level_detector_v2.detect_levels(highs, lows, closes, volumes, times=times)
+    return res
+
+
+async def on_market_update_level_scan_v2(symbol: str, timeframe: str):
+    """Callback для сканирования уровней V2 (DBSCAN/RANSAC/volume profile)."""
+    global level_scan_v2_seen, search_level_v2_min_strength, search_timeframe_filter
+
+    if search_timeframe_filter and timeframe != search_timeframe_filter:
+        return
+
+    key = f"{symbol}_{timeframe}"
+    if key in level_scan_v2_seen:
+        return
+
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles or len(candles) < 30:
+        return
+
+    res = _detect_levels_v2_for(symbol, timeframe, candles)
+    min_strength = search_level_v2_min_strength
+
+    emitted = False
+    for lv in res["support_levels"] + res["resistance_levels"]:
+        if lv["strength"] >= min_strength:
+            emitted = True
+            await broadcast_message({
+                "type": "match",
+                "data": _level_v2_to_match_data(lv, symbol, timeframe, candles, is_trendline=False),
+            })
+    for tl in res["trendlines"]:
+        if tl["strength"] >= min_strength:
+            emitted = True
+            await broadcast_message({
+                "type": "match",
+                "data": _level_v2_to_match_data(tl, symbol, timeframe, candles, is_trendline=True),
+            })
+
+    if emitted:
+        level_scan_v2_seen.add(key)
+
+
+async def run_initial_level_scan_v2():
+    """Начальное сканирование уровней V2 по всем символам/таймфреймам."""
+    global level_scan_v2_seen, search_level_v2_min_strength, search_timeframe_filter
+
+    match_count = 0
+    min_strength = search_level_v2_min_strength
+
+    for symbol, sym_data in scanner.symbol_data.items():
+        for timeframe, candles_list in sym_data.candles.items():
+            if "_w" in timeframe:
+                continue
+            if search_timeframe_filter and timeframe != search_timeframe_filter:
+                continue
+            if not candles_list or len(candles_list) < 30:
+                continue
+
+            key = f"{symbol}_{timeframe}"
+            if key in level_scan_v2_seen:
+                continue
+
+            res = _detect_levels_v2_for(symbol, timeframe, candles_list)
+            emitted = False
+            for lv in res["support_levels"] + res["resistance_levels"]:
+                if lv["strength"] >= min_strength:
+                    emitted = True
+                    match_count += 1
+                    await broadcast_message({
+                        "type": "match",
+                        "data": _level_v2_to_match_data(lv, symbol, timeframe, candles_list, is_trendline=False),
+                    })
+            for tl in res["trendlines"]:
+                if tl["strength"] >= min_strength:
+                    emitted = True
+                    match_count += 1
+                    await broadcast_message({
+                        "type": "match",
+                        "data": _level_v2_to_match_data(tl, symbol, timeframe, candles_list, is_trendline=True),
+                    })
+            if emitted:
+                level_scan_v2_seen.add(key)
+
+    await broadcast_message({
+        "type": "initial_scan_complete",
+        "data": {"total_matches": match_count}
+    })
+
+
 async def ensure_scanner_initialized():
     """Initialize scanner once, reuse for all subsequent scans."""
     if scanner.initialized:
@@ -644,6 +946,14 @@ async def run_initial_scan():
     
     if search_mode == "level_scan":
         await run_initial_level_scan()
+        return
+    
+    if search_mode == "level_scan_v2":
+        await run_initial_level_scan_v2()
+        return
+    
+    if search_mode == "causal_patterns":
+        await run_initial_causal_scan()
         return
     
     if current_reference is None:
@@ -977,7 +1287,7 @@ async def create_manual_structure(data: ManualStructureRequest):
 @app.post("/api/start-scan")
 async def start_scan(data: Optional[StartScanRequest] = None):
     """Start continuous market scanning."""
-    global is_scanning, scan_task, _init_task, _pending_initial_scan, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter, fibo_scan_seen, search_fibo_min_touches, search_fibo_min_quality, level_scan_seen, search_level_min_touches
+    global is_scanning, scan_task, _init_task, _pending_initial_scan, current_reference, search_mode, search_pattern_type, current_structure_id, search_type_filter, type_scan_seen, causal_scan_seen, search_candle_filter, candle_scan_seen, search_timeframe_filter, fibo_scan_seen, search_fibo_min_touches, search_fibo_min_quality, level_scan_seen, search_level_min_touches, level_scan_v2_seen, search_level_v2_min_strength
     
     if data is None:
         data = StartScanRequest()
@@ -990,10 +1300,13 @@ async def start_scan(data: Optional[StartScanRequest] = None):
     search_fibo_min_touches = data.fibo_min_touches
     search_fibo_min_quality = data.fibo_min_quality
     search_level_min_touches = data.level_min_touches
+    search_level_v2_min_strength = data.level_v2_min_strength
     type_scan_seen = set()
     candle_scan_seen = set()
+    causal_scan_seen = set()
     fibo_scan_seen = set()
     level_scan_seen = set()
+    level_scan_v2_seen = set()
     
     if data.mode == "candle_scan":
         if data.candle_filter is None:
@@ -1037,6 +1350,14 @@ async def start_scan(data: Optional[StartScanRequest] = None):
         current_structure_id = None
 
     elif data.mode == "level_scan":
+        current_reference = None
+        current_structure_id = None
+
+    elif data.mode == "level_scan_v2":
+        current_reference = None
+        current_structure_id = None
+
+    elif data.mode == "causal_patterns":
         current_reference = None
         current_structure_id = None
 
@@ -1208,7 +1529,7 @@ async def get_market_movers():
                         _market_movers_cache["data"] = movers
                         _market_movers_cache["timestamp"] = now
         except Exception as e:
-            print(f"Error fetching market movers: {e}")
+            logger.error(f"Error fetching market movers: {e}")
     
     return {"movers": _market_movers_cache["data"]}
 
@@ -1235,6 +1556,29 @@ async def get_structures():
     """Get all saved structures."""
     structures = await database.get_all_structures()
     return {"structures": structures}
+
+
+@app.get("/api/levels-v2/{symbol}/{timeframe}")
+async def get_levels_v2(symbol: str, timeframe: str):
+    """Возвращает уровни и трендлайны LevelDetectorV2 для символа/таймфрейма."""
+    candles = scanner.get_candles(symbol, timeframe)
+    if not candles or len(candles) < 30:
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "support": [],
+            "resistance": [],
+            "trendlines": [],
+            "message": "Недостаточно данных (нужно ≥30 свечей).",
+        }
+    res = _detect_levels_v2_for(symbol, timeframe, candles)
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "support": res["support_levels"],
+        "resistance": res["resistance_levels"],
+        "trendlines": res["trendlines"],
+    }
 
 
 @app.get("/api/structures/{structure_id}")
@@ -1419,7 +1763,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if websocket in active_websockets:
             active_websockets.remove(websocket)
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.warning(f"WebSocket error: {e}")
         if websocket in active_websockets:
             active_websockets.remove(websocket)
 

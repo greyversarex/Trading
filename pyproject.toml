@@ -16,3 +16,12 @@ dependencies = [
     "uvicorn>=0.38.0",
     "websockets>=15.0.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

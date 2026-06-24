@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
 from enum import Enum
 
+from .config import CONFIG
+
 
 class FiboLevel(str, Enum):
     LEVEL_0 = "0.0"
@@ -76,9 +78,9 @@ class FiboResult:
 
 class FibonacciAnalyzer:
 
-    def __init__(self, touch_tolerance: float = 0.003, min_swing_pct: float = 0.02):
-        self.touch_tolerance = touch_tolerance
-        self.min_swing_pct = min_swing_pct
+    def __init__(self, touch_tolerance: float = None, min_swing_pct: float = None):
+        self.touch_tolerance = touch_tolerance if touch_tolerance is not None else CONFIG.fibo.touch_tolerance
+        self.min_swing_pct = min_swing_pct if min_swing_pct is not None else CONFIG.fibo.min_swing_pct
 
     def find_swing_points(self, closes: List[float], highs: List[float], lows: List[float]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
         if len(closes) < 20:

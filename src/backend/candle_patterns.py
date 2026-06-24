@@ -2,6 +2,8 @@ from enum import Enum
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
+from .config import CONFIG
+
 
 class CandlePatternType(Enum):
     DOJI = "doji"
@@ -237,7 +239,9 @@ class CandlePatternDetector:
         'three_black_crows', 'harami_bear', 'tweezer_top', 'dark_cloud',
     }
 
-    def _detect_preceding_trend(self, candles, idx, lookback=5):
+    def _detect_preceding_trend(self, candles, idx, lookback=None):
+        if lookback is None:
+            lookback = CONFIG.candle.lookback
         if idx < lookback:
             return 'neutral', 0.0
         preceding = candles[max(0, idx - lookback):idx]
@@ -256,7 +260,9 @@ class CandlePatternDetector:
             return 'down', min(1.0, abs(move_pct) * 20 + down_count / total)
         return 'neutral', 0.0
 
-    def find_all_positions(self, candles, pattern_filter: str = None, max_age: int = 10) -> List[dict]:
+    def find_all_positions(self, candles, pattern_filter: str = None, max_age: int = None) -> List[dict]:
+        if max_age is None:
+            max_age = CONFIG.candle.max_age
         if not candles or len(candles) < 3:
             return []
 
@@ -292,7 +298,7 @@ class CandlePatternDetector:
                     is_bull = False
                 else:
                     is_bull = candle.close >= candle.open
-                if vol_conf < 0.6 and pat.value not in {'doji', 'spinning_top'}:
+                if vol_conf < CONFIG.candle.volume_floor and pat.value not in {'doji', 'spinning_top'}:
                     continue
                 results.append({
                     "pattern": pat.value,

@@ -5,11 +5,64 @@ from typing import List, Tuple, Dict, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
+from .config import CONFIG
+
+
+def average_true_range(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+    """Средний истинный диапазон (ATR) по СЫРЫМ ценам (high/low/close).
+
+    True Range = max(high-low, |high-prev_close|, |low-prev_close|).
+    Возвращает среднее TR за последние `period` баров (или по всем доступным,
+    если баров меньше). При недостатке данных откатывается к среднему |diff close|.
+    """
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    closes = np.asarray(closes, dtype=float)
+    n = len(closes)
+    if n == 0:
+        return 0.0
+    if n < 2:
+        return float(highs[0] - lows[0]) if len(highs) and len(lows) else 0.0
+
+    prev_close = closes[:-1]
+    cur_high = highs[1:]
+    cur_low = lows[1:]
+    tr = np.maximum.reduce([
+        cur_high - cur_low,
+        np.abs(cur_high - prev_close),
+        np.abs(cur_low - prev_close),
+    ])
+    if len(tr) == 0:
+        return 0.0
+    window = tr[-period:] if len(tr) >= period else tr
+    return float(np.mean(window))
+
+
+def compute_volatility_scale(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+    """Базовая единица волатильности для адаптивных порогов детекции.
+
+    volatility_scale = max(ATR(period), price_range * 0.01), где
+    price_range = max(close) - min(close) по окну. Гарантированно > 0 при
+    валидных данных, чтобы избежать деления на ноль.
+    """
+    closes = np.asarray(closes, dtype=float)
+    if len(closes) == 0:
+        return 0.0
+    atr = average_true_range(highs, lows, closes, period=period)
+    price_range = float(np.max(closes) - np.min(closes))
+    return max(atr, price_range * 0.01)
+
 
 class StructureType(str, Enum):
     COMPRESSION = "compression"
     ACCUMULATION = "accumulation"
     TRIANGLE = "triangle"
+    ASCENDING_TRIANGLE = "ascending_triangle"
+    DESCENDING_TRIANGLE = "descending_triangle"
+    SYMMETRICAL_TRIANGLE = "symmetrical_triangle"
+    CHANNEL_UP = "channel_up"
+    CHANNEL_DOWN = "channel_down"
+    HORIZONTAL_CHANNEL = "horizontal_channel"
     RANGE = "range"
     RETEST = "retest"
     TREND_UP = "trend_up"
@@ -84,15 +137,58 @@ class StructureFeatures:
     is_pattern_active: bool = True
     pattern_freshness: float = 1.0
     volume_confirmation: float = 0.5
+    # --- Каузальная (не перерисовывающая) детекция (фаза 1.1) ---
+    # Опциональные поля со значениями по умолчанию: не меняют существующую
+    # схему БД/REST/WS, заполняются только в extract_features_causal().
+    candidate_index: int = -1          # бар, на котором паттерн сформировался
+    candidate_time: int = -1           # open_time бара-кандидата
+    confirmation_index: int = -1       # бар подтверждения (-1 если не подтверждён)
+    confirmation_time: int = -1        # open_time бара подтверждения (-1)
+    is_confirmed: bool = False         # паттерн подтверждён пробоем/follow-through
+    is_invalidated: bool = False       # кандидат аннулирован откатом цены
+
+
+@dataclass
+class _PatternCandidate:
+    """Внутренний кандидат паттерна для каузального подтверждения.
+
+    Геометрия пробоя хранится в РЕАЛЬНЫХ ценах и индексах баров (а не в
+    нормализованном пространстве), чтобы подтверждение выполнялось напрямую
+    по свечам без обратного преобразования координат.
+    """
+
+    structure_type: StructureType
+    confidence: float
+    candidate_index: int               # бар, на котором паттерн сформировался
+    family: str                        # breakout_level | breakout_channel | trend | range
+    direction: str = "both"            # up | down | both
+    breakout_level: float = 0.0        # горизонтальный уровень пробоя (raw price)
+    breakout_distance: float = 0.0     # высота паттерна (raw price) для допуска отката
+    upper_slope: float = 0.0           # наклонные границы (raw price на бар)
+    upper_int: float = 0.0
+    lower_slope: float = 0.0
+    lower_int: float = 0.0
+    upper_level: float = 0.0           # горизонтальные границы боковика
+    lower_level: float = 0.0
+
+
+@dataclass
+class _ConfirmResult:
+    """Результат каузального подтверждения кандидата."""
+
+    confirmed: bool = False
+    invalidated: bool = False
+    confirmation_index: int = -1
+    direction: str = ""
 
 
 class StructureExtractor:
     """Extracts structural features from price lines for comparison."""
     
-    def __init__(self, num_pivots: int = 10, resample_points: int = 100):
-        self.num_pivots = num_pivots
-        self.resample_points = resample_points
-        self.min_quality = 0.15
+    def __init__(self, num_pivots: int = None, resample_points: int = None):
+        self.num_pivots = num_pivots if num_pivots is not None else CONFIG.structure.num_pivots
+        self.resample_points = resample_points if resample_points is not None else CONFIG.structure.resample_points
+        self.min_quality = CONFIG.structure.min_quality
     
     def normalize_line(self, line: np.ndarray) -> np.ndarray:
         if len(line) == 0:
@@ -177,7 +273,11 @@ class StructureExtractor:
             min_dist = max(3, len(line) // 25)
             price_range = np.max(line) - np.min(line)
             diff_noise = np.std(np.diff(line)) / (price_range + 1e-10) if price_range > 0 else 0
-            prominence_threshold = max(0.08, min(0.25, 0.12 + diff_noise * 2.0))
+            prominence_threshold = max(
+                CONFIG.structure.prominence_min,
+                min(CONFIG.structure.prominence_max,
+                    CONFIG.structure.prominence_base + diff_noise * 2.0)
+            )
             for mp in multi_scale_pivots:
                 if mp.prominence > prominence_threshold:
                     too_close = False
@@ -215,8 +315,12 @@ class StructureExtractor:
         
         diff_std = np.std(abs_diffs) if len(abs_diffs) > 1 else 0
         noise_ratio = diff_std / (atr + 1e-10)
-        atr_mult = min(3.5, max(1.5, 1.5 + noise_ratio * 0.8))
-        min_swing = max(atr * atr_mult, 0.02)
+        atr_mult = min(
+            CONFIG.structure.zigzag_atr_mult_max,
+            max(CONFIG.structure.zigzag_atr_mult_min,
+                CONFIG.structure.zigzag_atr_mult_min + noise_ratio * 0.8)
+        )
+        min_swing = max(atr * atr_mult, CONFIG.structure.zigzag_min_swing_floor)
         min_spacing = max(3, n // 20)
         
         pivots = []
@@ -489,10 +593,11 @@ class StructureExtractor:
             prominence = p.prominence if p.prominence > 0 else abs(p.value - np.mean(line)) / line_range
             
             position_weight = 1.0
-            if p.relative_position > 0.7:
-                position_weight = 1.5
-            elif p.relative_position < 0.1:
-                position_weight = 1.3
+            if CONFIG.structure.recency_weight_enabled:
+                if p.relative_position > 0.7:
+                    position_weight = 1.5
+                elif p.relative_position < 0.1:
+                    position_weight = 1.3
             
             neighbor_diff = 0
             if i > 0:
@@ -672,18 +777,18 @@ class StructureExtractor:
         for i in range(len(highs) - 1):
             for j in range(i + 1, len(highs)):
                 diff = abs(highs[i].value - highs[j].value) / price_range
-                if diff < 0.03:
+                if diff < CONFIG.pattern.double_top_tolerance:
                     between_lows = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[j].index]
                     if between_lows:
                         dip = min(p.value for p in between_lows)
                         dip_depth = (highs[i].value - dip) / price_range
                         if dip_depth > 0.12:
-                            conf = (1.0 - diff / 0.03) * 0.5 + min(1.0, dip_depth / 0.3) * 0.5
+                            conf = (1.0 - diff / CONFIG.pattern.double_top_tolerance) * 0.5 + min(1.0, dip_depth / 0.3) * 0.5
                             if conf > best_conf:
                                 best_conf = conf
                                 best_neckline = dip
                                 best_top2_idx = highs[j].index
-        if best_conf <= 0.4:
+        if best_conf <= CONFIG.pattern.double_top_min_conf:
             return False, 0.0, True
         is_active = True
         if best_neckline is not None:
@@ -693,7 +798,7 @@ class StructureExtractor:
                 below_neckline = np.sum(tail < best_neckline - price_range * 0.02)
                 if below_neckline > len(tail) * 0.5:
                     is_active = False
-        return best_conf > 0.4, best_conf, is_active
+        return best_conf > CONFIG.pattern.double_top_min_conf, best_conf, is_active
 
     def _detect_double_bottom(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, float, bool]:
         lows = [p for p in pivots if not p.is_high]
@@ -709,18 +814,18 @@ class StructureExtractor:
         for i in range(len(lows) - 1):
             for j in range(i + 1, len(lows)):
                 diff = abs(lows[i].value - lows[j].value) / price_range
-                if diff < 0.03:
+                if diff < CONFIG.pattern.double_top_tolerance:
                     between_highs = [p for p in pivots if p.is_high and lows[i].index < p.index < lows[j].index]
                     if between_highs:
                         peak = max(p.value for p in between_highs)
                         peak_height = (peak - lows[i].value) / price_range
                         if peak_height > 0.12:
-                            conf = (1.0 - diff / 0.03) * 0.5 + min(1.0, peak_height / 0.3) * 0.5
+                            conf = (1.0 - diff / CONFIG.pattern.double_top_tolerance) * 0.5 + min(1.0, peak_height / 0.3) * 0.5
                             if conf > best_conf:
                                 best_conf = conf
                                 best_neckline = peak
                                 best_bot2_idx = lows[j].index
-        if best_conf <= 0.4:
+        if best_conf <= CONFIG.pattern.double_bottom_min_conf:
             return False, 0.0, True
         is_active = True
         if best_neckline is not None:
@@ -730,7 +835,7 @@ class StructureExtractor:
                 above_neckline = np.sum(tail > best_neckline + price_range * 0.02)
                 if above_neckline > len(tail) * 0.5:
                     is_active = False
-        return best_conf > 0.4, best_conf, is_active
+        return best_conf > CONFIG.pattern.double_bottom_min_conf, best_conf, is_active
 
     def _detect_head_shoulders(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, float, bool]:
         highs = [p for p in pivots if p.is_high]
@@ -750,13 +855,13 @@ class StructureExtractor:
             if head > left and head > right:
                 shoulder_diff = abs(left - right) / price_range
                 head_prominence = (head - max(left, right)) / price_range
-                if shoulder_diff < 0.18 and head_prominence > 0.06:
+                if shoulder_diff < CONFIG.pattern.hs_shoulder_diff_max and head_prominence > CONFIG.pattern.hs_head_prominence_min:
                     neckline_lows = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[i+2].index]
                     neckline_bonus = 0.2 if len(neckline_lows) >= 2 else 0.0
-                    conf = (1.0 - shoulder_diff / 0.18) * 0.3 + min(1.0, head_prominence / 0.15) * 0.4 + neckline_bonus + 0.1
+                    conf = (1.0 - shoulder_diff / CONFIG.pattern.hs_shoulder_diff_max) * 0.3 + min(1.0, head_prominence / 0.15) * 0.4 + neckline_bonus + 0.1
                     shoulder_avg = (left + right) / 2
                     shoulder_head_ratio = shoulder_avg / head if head > 0 else 0
-                    if shoulder_head_ratio < 0.4 or shoulder_head_ratio > 0.95:
+                    if shoulder_head_ratio < CONFIG.pattern.hs_shoulder_head_ratio_min or shoulder_head_ratio > CONFIG.pattern.hs_shoulder_head_ratio_max:
                         conf *= 0.6
                     time_span = highs[i + 2].index - highs[i].index
                     left_span = highs[i + 1].index - highs[i].index
@@ -770,7 +875,7 @@ class StructureExtractor:
                         if neckline_lows:
                             best_neckline = np.mean([p.value for p in neckline_lows])
                         best_right_idx = highs[i + 2].index
-        if best_conf <= 0.4:
+        if best_conf <= CONFIG.pattern.hs_min_conf:
             return False, 0.0, True
         is_active = True
         if best_neckline is not None:
@@ -780,7 +885,7 @@ class StructureExtractor:
                 below_neckline = np.sum(tail < best_neckline - price_range * 0.02)
                 if below_neckline > len(tail) * 0.5:
                     is_active = False
-        return best_conf > 0.4, best_conf, is_active
+        return best_conf > CONFIG.pattern.hs_min_conf, best_conf, is_active
 
     def _detect_inv_head_shoulders(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, float, bool]:
         lows = [p for p in pivots if not p.is_high]
@@ -800,10 +905,10 @@ class StructureExtractor:
             if head < left and head < right:
                 shoulder_diff = abs(left - right) / price_range
                 head_prominence = (min(left, right) - head) / price_range
-                if shoulder_diff < 0.18 and head_prominence > 0.06:
+                if shoulder_diff < CONFIG.pattern.hs_shoulder_diff_max and head_prominence > CONFIG.pattern.hs_head_prominence_min:
                     neckline_highs = [p for p in pivots if p.is_high and lows[i].index < p.index < lows[i+2].index]
                     neckline_bonus = 0.2 if len(neckline_highs) >= 2 else 0.0
-                    conf = (1.0 - shoulder_diff / 0.18) * 0.3 + min(1.0, head_prominence / 0.15) * 0.4 + neckline_bonus + 0.1
+                    conf = (1.0 - shoulder_diff / CONFIG.pattern.hs_shoulder_diff_max) * 0.3 + min(1.0, head_prominence / 0.15) * 0.4 + neckline_bonus + 0.1
                     shoulder_avg = (left + right) / 2
                     if neckline_highs:
                         neckline_val = np.mean([p.value for p in neckline_highs])
@@ -835,7 +940,7 @@ class StructureExtractor:
                 above_neckline = np.sum(tail > best_neckline + price_range * 0.02)
                 if above_neckline > len(tail) * 0.5:
                     is_active = False
-        return best_conf > 0.4, best_conf, is_active
+        return best_conf > CONFIG.pattern.hs_min_conf, best_conf, is_active
 
     def _detect_flag(self, line: np.ndarray, pivots: List[PivotPoint]) -> Tuple[bool, str, float, bool]:
         n = len(line)
@@ -882,7 +987,7 @@ class StructureExtractor:
                     best_flag_low = np.min(flag_part)
                     best_flag_end = split + len(flag_part)
         
-        if best_conf <= 0.5:
+        if best_conf <= CONFIG.pattern.flag_min_conf:
             return False, "", 0.0, True
         flag_range = best_flag_high - best_flag_low
         if flag_range > 0:
@@ -892,9 +997,9 @@ class StructureExtractor:
         is_active = True
         tail = line[int(n * 0.85):]
         if len(tail) > 2:
-            if best_dir == "bull" and np.mean(tail) > best_flag_high + price_range * 0.03:
+            if best_dir == "bull" and np.mean(tail) > best_flag_high + price_range * CONFIG.pattern.flag_breakout_retreat:
                 is_active = False
-            elif best_dir == "bear" and np.mean(tail) < best_flag_low - price_range * 0.03:
+            elif best_dir == "bear" and np.mean(tail) < best_flag_low - price_range * CONFIG.pattern.flag_breakout_retreat:
                 is_active = False
         return True, best_dir, best_conf, is_active
 
@@ -931,14 +1036,14 @@ class StructureExtractor:
             return False, "", 0.0, True
 
         convergence = 1.0 - (spread_end / spread_start)
-        if convergence < 0.15:
+        if convergence < CONFIG.pattern.wedge_convergence_min:
             return False, "", 0.0, True
 
         h_residuals = np.abs(h_values - (h_int + h_slope_raw * h_indices))
         l_residuals = np.abs(l_values - (l_int + l_slope_raw * l_indices))
         fit_score = max(0, 1.0 - (np.mean(h_residuals) + np.mean(l_residuals)) / (2 * price_range))
 
-        if fit_score < 0.7:
+        if fit_score < CONFIG.pattern.wedge_fit_min:
             return False, "", 0.0, True
 
         conf = convergence * 0.4 + fit_score * 0.4 + 0.2
@@ -1077,9 +1182,9 @@ class StructureExtractor:
             return False, 0.0, True
 
         convergence_ratio = 1.0 - (spread_end / spread_start) if spread_start > 0 else 0
-        if convergence_ratio < 0.15:
+        if convergence_ratio < CONFIG.pattern.triangle_convergence_min:
             return False, 0.0, True
-        if convergence_ratio > 0.95:
+        if convergence_ratio > CONFIG.pattern.triangle_convergence_max:
             return False, 0.0, True
 
         if spread_end < 0:
@@ -1088,7 +1193,7 @@ class StructureExtractor:
         pattern_span = last_idx - first_idx
         if pattern_span > 0:
             norm_conv_rate = convergence_ratio / (pattern_span / n) if n > 0 else 0
-            if norm_conv_rate > 3.0:
+            if norm_conv_rate > CONFIG.pattern.triangle_norm_conv_rate_max:
                 return False, 0.0, True
 
         h_residuals = np.abs(h_values - (h_intercept + h_slope * h_indices))
@@ -1097,7 +1202,7 @@ class StructureExtractor:
         l_fit = 1.0 - np.mean(l_residuals) / price_range
         fit_score = max(0, (h_fit + l_fit) / 2)
 
-        if fit_score < 0.75:
+        if fit_score < CONFIG.pattern.triangle_fit_min:
             return False, 0.0, True
 
         h_r2 = h_r ** 2 if len(h_indices) >= 2 else 0
@@ -1114,7 +1219,7 @@ class StructureExtractor:
         conf = convergence_ratio * 0.35 + fit_score * 0.35 + pivot_count_score * 0.2 + max(0, compression) * 0.1
         conf = min(1.0, conf)
 
-        if conf <= 0.45:
+        if conf <= CONFIG.pattern.triangle_min_conf:
             return False, 0.0, True
 
         is_active = True
@@ -1131,6 +1236,631 @@ class StructureExtractor:
             is_active = False
 
         return True, conf, is_active
+
+    def _triangle_subtype(self, pivots: List[PivotPoint], line: np.ndarray) -> StructureType:
+        """Определяет подтип треугольника по наклонам границ.
+
+        Восходящий — плоская вершина + растущие минимумы; нисходящий — падающие
+        максимумы + плоское основание; симметричный — обе границы сходятся.
+        """
+        high_pivots = [p for p in pivots if p.is_high]
+        low_pivots = [p for p in pivots if not p.is_high]
+        if len(high_pivots) < 2 or len(low_pivots) < 2:
+            return StructureType.TRIANGLE
+        h_idx = np.array([p.index for p in high_pivots], dtype=float)
+        h_val = np.array([p.value for p in high_pivots], dtype=float)
+        l_idx = np.array([p.index for p in low_pivots], dtype=float)
+        l_val = np.array([p.value for p in low_pivots], dtype=float)
+        h_slope = linregress(h_idx, h_val)[0]
+        l_slope = linregress(l_idx, l_val)[0]
+        if l_slope > 0 and abs(h_slope) < abs(l_slope) * 0.3:
+            return StructureType.ASCENDING_TRIANGLE
+        if h_slope < 0 and abs(l_slope) < abs(h_slope) * 0.3:
+            return StructureType.DESCENDING_TRIANGLE
+        if h_slope < 0 and l_slope > 0:
+            return StructureType.SYMMETRICAL_TRIANGLE
+        return StructureType.TRIANGLE
+
+    def _detect_channel(self, pivots: List[PivotPoint], line: np.ndarray) -> Tuple[bool, StructureType, float, bool]:
+        """Детектирует канал — две примерно параллельные границы по пивотам.
+
+        В отличие от клина (границы сходятся), у канала наклоны границ близки,
+        а ширина почти постоянна. Направление определяется средним наклоном.
+        """
+        high_pivots = [p for p in pivots if p.is_high]
+        low_pivots = [p for p in pivots if not p.is_high]
+        if len(high_pivots) < 2 or len(low_pivots) < 2:
+            return False, StructureType.HORIZONTAL_CHANNEL, 0.0, True
+        n = len(line)
+        price_range = float(np.max(line) - np.min(line))
+        if price_range <= 0:
+            return False, StructureType.HORIZONTAL_CHANNEL, 0.0, True
+
+        h_idx = np.array([p.index for p in high_pivots], dtype=float)
+        h_val = np.array([p.value for p in high_pivots], dtype=float)
+        l_idx = np.array([p.index for p in low_pivots], dtype=float)
+        l_val = np.array([p.value for p in low_pivots], dtype=float)
+        h_slope, h_int, _, _, _ = linregress(h_idx, h_val)
+        l_slope, l_int, _, _, _ = linregress(l_idx, l_val)
+
+        h_res = np.abs(h_val - (h_int + h_slope * h_idx))
+        l_res = np.abs(l_val - (l_int + l_slope * l_idx))
+        fit = max(0.0, 1.0 - (np.mean(h_res) + np.mean(l_res)) / (2 * price_range))
+        if fit < CONFIG.pattern.channel_fit_min:
+            return False, StructureType.HORIZONTAL_CHANNEL, 0.0, True
+
+        span = max(1, n - 1)
+        norm_h = h_slope * span / price_range
+        norm_l = l_slope * span / price_range
+        slope_diff = abs(norm_h - norm_l)
+        denom = max(abs(norm_h), abs(norm_l), 0.1)
+        rel_diff = slope_diff / denom
+        # параллельность: либо относительная разница наклонов мала, либо обе
+        # границы почти горизонтальны (малая абсолютная разница).
+        if rel_diff > CONFIG.pattern.channel_parallel_tolerance and slope_diff > 0.1:
+            return False, StructureType.HORIZONTAL_CHANNEL, 0.0, True
+
+        first_idx = pivots[0].index
+        last_idx = max(pivots[-1].index, n - 1)
+        spread_start = (h_int + h_slope * first_idx) - (l_int + l_slope * first_idx)
+        spread_end = (h_int + h_slope * last_idx) - (l_int + l_slope * last_idx)
+        if spread_start <= 0 or spread_end <= 0:
+            return False, StructureType.HORIZONTAL_CHANNEL, 0.0, True
+        convergence = abs(1.0 - spread_end / spread_start)
+        if convergence > 0.4:
+            # ширина заметно меняется -> это клин/треугольник, не канал
+            return False, StructureType.HORIZONTAL_CHANNEL, 0.0, True
+
+        avg_norm = (norm_h + norm_l) / 2
+        if avg_norm > 0.15:
+            ch_type = StructureType.CHANNEL_UP
+        elif avg_norm < -0.15:
+            ch_type = StructureType.CHANNEL_DOWN
+        else:
+            ch_type = StructureType.HORIZONTAL_CHANNEL
+
+        conf = fit * 0.5 + (1.0 - min(1.0, rel_diff)) * 0.2 + (1.0 - convergence) * 0.1 + 0.2
+        conf = min(1.0, conf)
+        if conf <= CONFIG.pattern.channel_min_conf:
+            return False, ch_type, 0.0, True
+
+        is_active = True
+        tail_start = int(n * 0.85)
+        breakout_count = 0
+        total_tail = n - tail_start
+        for i in range(tail_start, n):
+            upper = h_int + h_slope * i
+            lower = l_int + l_slope * i
+            margin = price_range * 0.02
+            if line[i] > upper + margin or line[i] < lower - margin:
+                breakout_count += 1
+        if total_tail > 0 and breakout_count > total_tail * 0.5:
+            is_active = False
+
+        return True, ch_type, conf, is_active
+
+    # ------------------------------------------------------------------
+    # Каузальная (не перерисовывающая) детекция — фаза 1.1
+    # ------------------------------------------------------------------
+    def _fit_pivot_lines(self, pivots: List[PivotPoint], closes: np.ndarray,
+                         volatility_scale: float = 0.0):
+        """Аппроксимирует верхнюю/нижнюю границы по пивотам в РЕАЛЬНЫХ ценах.
+
+        Возвращает (h_slope, h_int, l_slope, l_int, fit_score, price_range) или
+        None, если пивотов недостаточно. Остатки фита измеряются в ЦЕНОВЫХ
+        единицах и нормируются на знаменатель ``max(price_range,
+        fit_residual_atr_mult * volatility_scale)``. При ``volatility_scale == 0``
+        знаменатель равен ``price_range`` (идентично прежнему поведению); при
+        высокой волатильности знаменатель растёт, поэтому порог фита только
+        ОСЛАБЛЯЕТСЯ и валидный паттерн не теряется из-за шума.
+        """
+        highs = [p for p in pivots if p.is_high]
+        lows = [p for p in pivots if not p.is_high]
+        if len(highs) < 2 or len(lows) < 2:
+            return None
+        price_range = float(np.max(closes) - np.min(closes))
+        if price_range <= 0:
+            return None
+        h_idx = np.array([p.index for p in highs], dtype=float)
+        h_val = np.array([p.value for p in highs], dtype=float)
+        l_idx = np.array([p.index for p in lows], dtype=float)
+        l_val = np.array([p.value for p in lows], dtype=float)
+        h_slope, h_int, _, _, _ = linregress(h_idx, h_val)
+        l_slope, l_int, _, _, _ = linregress(l_idx, l_val)
+        h_res = np.abs(h_val - (h_int + h_slope * h_idx))
+        l_res = np.abs(l_val - (l_int + l_slope * l_idx))
+        mean_res = (np.mean(h_res) + np.mean(l_res)) / 2
+        denom = max(price_range, CONFIG.pattern.fit_residual_atr_mult * volatility_scale)
+        fit = max(0.0, 1.0 - mean_res / denom)
+        return h_slope, h_int, l_slope, l_int, fit, price_range
+
+    def _candidate_double_top(self, closes: np.ndarray, pivots: List[PivotPoint],
+                              volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        highs = [p for p in pivots if p.is_high]
+        price_range = float(np.max(closes) - np.min(closes))
+        if len(highs) < 2 or price_range <= 0:
+            return None
+        tol_abs = max(CONFIG.pattern.double_top_tolerance * price_range,
+                      CONFIG.pattern.double_top_atr_mult * volatility_scale)
+        if tol_abs <= 0:
+            return None
+        best = None
+        best_conf = 0.0
+        for i in range(len(highs) - 1):
+            for j in range(i + 1, len(highs)):
+                abs_diff = abs(highs[i].value - highs[j].value)
+                if abs_diff < tol_abs:
+                    between = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[j].index]
+                    if between:
+                        dip = min(p.value for p in between)
+                        depth = (highs[i].value - dip) / price_range
+                        if depth > 0.12:
+                            conf = (1.0 - abs_diff / tol_abs) * 0.5 + min(1.0, depth / 0.3) * 0.5
+                            if conf > best_conf:
+                                best_conf = conf
+                                best = _PatternCandidate(
+                                    structure_type=StructureType.DOUBLE_TOP,
+                                    confidence=conf,
+                                    candidate_index=int(highs[j].index),
+                                    family="breakout_level",
+                                    direction="down",
+                                    breakout_level=float(dip),
+                                    breakout_distance=float(highs[i].value - dip),
+                                )
+        return best
+
+    def _candidate_double_bottom(self, closes: np.ndarray, pivots: List[PivotPoint],
+                                 volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        lows = [p for p in pivots if not p.is_high]
+        price_range = float(np.max(closes) - np.min(closes))
+        if len(lows) < 2 or price_range <= 0:
+            return None
+        tol_abs = max(CONFIG.pattern.double_top_tolerance * price_range,
+                      CONFIG.pattern.double_top_atr_mult * volatility_scale)
+        if tol_abs <= 0:
+            return None
+        best = None
+        best_conf = 0.0
+        for i in range(len(lows) - 1):
+            for j in range(i + 1, len(lows)):
+                abs_diff = abs(lows[i].value - lows[j].value)
+                if abs_diff < tol_abs:
+                    between = [p for p in pivots if p.is_high and lows[i].index < p.index < lows[j].index]
+                    if between:
+                        peak = max(p.value for p in between)
+                        height = (peak - lows[i].value) / price_range
+                        if height > 0.12:
+                            conf = (1.0 - abs_diff / tol_abs) * 0.5 + min(1.0, height / 0.3) * 0.5
+                            if conf > best_conf:
+                                best_conf = conf
+                                best = _PatternCandidate(
+                                    structure_type=StructureType.DOUBLE_BOTTOM,
+                                    confidence=conf,
+                                    candidate_index=int(lows[j].index),
+                                    family="breakout_level",
+                                    direction="up",
+                                    breakout_level=float(peak),
+                                    breakout_distance=float(peak - lows[i].value),
+                                )
+        return best
+
+    def _candidate_head_shoulders(self, closes: np.ndarray, pivots: List[PivotPoint]) -> Optional[_PatternCandidate]:
+        highs = [p for p in pivots if p.is_high]
+        price_range = float(np.max(closes) - np.min(closes))
+        if len(highs) < 3 or price_range <= 0:
+            return None
+        best = None
+        best_conf = 0.0
+        for i in range(len(highs) - 2):
+            left, head, right = highs[i].value, highs[i + 1].value, highs[i + 2].value
+            if head > left and head > right:
+                shoulder_diff = abs(left - right) / price_range
+                head_prom = (head - max(left, right)) / price_range
+                if shoulder_diff < CONFIG.pattern.hs_shoulder_diff_max and head_prom > CONFIG.pattern.hs_head_prominence_min:
+                    neck = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[i + 2].index]
+                    if neck:
+                        neckline = float(np.mean([p.value for p in neck]))
+                        conf = (1.0 - shoulder_diff / CONFIG.pattern.hs_shoulder_diff_max) * 0.4 + min(1.0, head_prom / 0.15) * 0.4 + 0.2
+                        if conf > best_conf:
+                            best_conf = conf
+                            best = _PatternCandidate(
+                                structure_type=StructureType.HEAD_SHOULDERS,
+                                confidence=conf,
+                                candidate_index=int(highs[i + 2].index),
+                                family="breakout_level",
+                                direction="down",
+                                breakout_level=neckline,
+                                breakout_distance=float(head - neckline),
+                            )
+        return best
+
+    def _candidate_inv_head_shoulders(self, closes: np.ndarray, pivots: List[PivotPoint]) -> Optional[_PatternCandidate]:
+        lows = [p for p in pivots if not p.is_high]
+        price_range = float(np.max(closes) - np.min(closes))
+        if len(lows) < 3 or price_range <= 0:
+            return None
+        best = None
+        best_conf = 0.0
+        for i in range(len(lows) - 2):
+            left, head, right = lows[i].value, lows[i + 1].value, lows[i + 2].value
+            if head < left and head < right:
+                shoulder_diff = abs(left - right) / price_range
+                head_prom = (min(left, right) - head) / price_range
+                if shoulder_diff < CONFIG.pattern.hs_shoulder_diff_max and head_prom > CONFIG.pattern.hs_head_prominence_min:
+                    neck = [p for p in pivots if p.is_high and lows[i].index < p.index < lows[i + 2].index]
+                    if neck:
+                        neckline = float(np.mean([p.value for p in neck]))
+                        conf = (1.0 - shoulder_diff / CONFIG.pattern.hs_shoulder_diff_max) * 0.4 + min(1.0, head_prom / 0.15) * 0.4 + 0.2
+                        if conf > best_conf:
+                            best_conf = conf
+                            best = _PatternCandidate(
+                                structure_type=StructureType.INV_HEAD_SHOULDERS,
+                                confidence=conf,
+                                candidate_index=int(lows[i + 2].index),
+                                family="breakout_level",
+                                direction="up",
+                                breakout_level=neckline,
+                                breakout_distance=float(neckline - head),
+                            )
+        return best
+
+    def _candidate_triangle(self, closes: np.ndarray, pivots: List[PivotPoint], st: StructureType,
+                            volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        fit = self._fit_pivot_lines(pivots, closes, volatility_scale)
+        if fit is None:
+            return None
+        h_slope, h_int, l_slope, l_int, fit_score, price_range = fit
+        if fit_score < CONFIG.pattern.triangle_fit_min:
+            return None
+        cand_idx = int(max(p.index for p in pivots))
+        if st == StructureType.ASCENDING_TRIANGLE:
+            direction = "up"
+        elif st == StructureType.DESCENDING_TRIANGLE:
+            direction = "down"
+        else:
+            direction = "both"
+        upper = h_int + h_slope * cand_idx
+        lower = l_int + l_slope * cand_idx
+        return _PatternCandidate(
+            structure_type=st,
+            confidence=0.5,
+            candidate_index=cand_idx,
+            family="breakout_channel",
+            direction=direction,
+            breakout_distance=float(max(upper - lower, price_range * 0.05)),
+            upper_slope=float(h_slope),
+            upper_int=float(h_int),
+            lower_slope=float(l_slope),
+            lower_int=float(l_int),
+        )
+
+    def _candidate_channel(self, closes: np.ndarray, pivots: List[PivotPoint], st: StructureType,
+                           volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        fit = self._fit_pivot_lines(pivots, closes, volatility_scale)
+        if fit is None:
+            return None
+        h_slope, h_int, l_slope, l_int, fit_score, price_range = fit
+        if fit_score < CONFIG.pattern.channel_fit_min:
+            return None
+        cand_idx = int(max(p.index for p in pivots))
+        upper = h_int + h_slope * cand_idx
+        lower = l_int + l_slope * cand_idx
+        return _PatternCandidate(
+            structure_type=st,
+            confidence=0.5,
+            candidate_index=cand_idx,
+            family="breakout_channel",
+            direction="both",
+            breakout_distance=float(max(upper - lower, price_range * 0.05)),
+            upper_slope=float(h_slope),
+            upper_int=float(h_int),
+            lower_slope=float(l_slope),
+            lower_int=float(l_int),
+        )
+
+    def _candidate_wedge(self, closes: np.ndarray, pivots: List[PivotPoint], st: StructureType,
+                         volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        fit = self._fit_pivot_lines(pivots, closes, volatility_scale)
+        if fit is None:
+            return None
+        h_slope, h_int, l_slope, l_int, fit_score, price_range = fit
+        if fit_score < CONFIG.pattern.wedge_fit_min:
+            return None
+        cand_idx = int(max(p.index for p in pivots))
+        direction = "down" if st == StructureType.RISING_WEDGE else "up"
+        upper = h_int + h_slope * cand_idx
+        lower = l_int + l_slope * cand_idx
+        return _PatternCandidate(
+            structure_type=st,
+            confidence=0.5,
+            candidate_index=cand_idx,
+            family="breakout_channel",
+            direction=direction,
+            breakout_distance=float(max(upper - lower, price_range * 0.05)),
+            upper_slope=float(h_slope),
+            upper_int=float(h_int),
+            lower_slope=float(l_slope),
+            lower_int=float(l_int),
+        )
+
+    def _candidate_trend(self, closes: np.ndarray, pivots: List[PivotPoint], st: StructureType, direction: str) -> Optional[_PatternCandidate]:
+        n = len(closes)
+        if n < 3:
+            return None
+        ref_idx = n - 3
+        return _PatternCandidate(
+            structure_type=st,
+            confidence=0.5,
+            candidate_index=int(ref_idx),
+            family="trend",
+            direction=direction,
+            breakout_level=float(closes[ref_idx]),
+        )
+
+    def _candidate_range(self, closes: np.ndarray, pivots: List[PivotPoint], st: StructureType) -> Optional[_PatternCandidate]:
+        n = len(closes)
+        price_range = float(np.max(closes) - np.min(closes))
+        if price_range <= 0 or n < 4:
+            return None
+        body = closes[: max(1, n - 2)]
+        upper = float(np.max(body))
+        lower = float(np.min(body))
+        return _PatternCandidate(
+            structure_type=st,
+            confidence=0.5,
+            candidate_index=int(len(body) - 1),
+            family="range",
+            direction="both",
+            upper_level=upper,
+            lower_level=lower,
+            breakout_distance=float(upper - lower),
+        )
+
+    def _build_candidate(self, structure_type: StructureType, closes: np.ndarray,
+                         pivots: List[PivotPoint], candles,
+                         volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:
+        """Строит каузальный кандидат под классифицированный тип структуры.
+
+        ``volatility_scale`` (ATR-базовая единица) при значении > 0 включает
+        ATR-адаптивные допуски в геометрии паттернов; при 0 поведение
+        идентично фиксированным порогам (обратная совместимость).
+        """
+        st = structure_type
+        if st == StructureType.DOUBLE_TOP:
+            return self._candidate_double_top(closes, pivots, volatility_scale)
+        if st == StructureType.DOUBLE_BOTTOM:
+            return self._candidate_double_bottom(closes, pivots, volatility_scale)
+        if st == StructureType.HEAD_SHOULDERS:
+            return self._candidate_head_shoulders(closes, pivots)
+        if st == StructureType.INV_HEAD_SHOULDERS:
+            return self._candidate_inv_head_shoulders(closes, pivots)
+        if st in (StructureType.TRIANGLE, StructureType.ASCENDING_TRIANGLE,
+                  StructureType.DESCENDING_TRIANGLE, StructureType.SYMMETRICAL_TRIANGLE):
+            return self._candidate_triangle(closes, pivots, st, volatility_scale)
+        if st in (StructureType.CHANNEL_UP, StructureType.CHANNEL_DOWN, StructureType.HORIZONTAL_CHANNEL):
+            return self._candidate_channel(closes, pivots, st, volatility_scale)
+        if st in (StructureType.RISING_WEDGE, StructureType.FALLING_WEDGE):
+            return self._candidate_wedge(closes, pivots, st, volatility_scale)
+        if st in (StructureType.TREND_UP, StructureType.IMPULSE_UP, StructureType.SQUEEZE_UP, StructureType.BREAKOUT):
+            return self._candidate_trend(closes, pivots, st, "up")
+        if st in (StructureType.TREND_DOWN, StructureType.IMPULSE_DOWN, StructureType.SQUEEZE_DOWN):
+            return self._candidate_trend(closes, pivots, st, "down")
+        if st in (StructureType.RANGE, StructureType.COMPRESSION, StructureType.ACCUMULATION):
+            return self._candidate_range(closes, pivots, st)
+        return None
+
+    def _confirm_candidate(self, cand: _PatternCandidate, candles) -> _ConfirmResult:
+        """Каузально подтверждает кандидата, используя только бары после него.
+
+        Для семейств пробоя (горизонтальный уровень / наклонные границы) ждёт
+        закрытия за уровнем, затем требует ``confirmation_bars`` баров без отката
+        более чем на ``confirmation_retreat_fraction`` высоты паттерна обратно
+        через уровень. Для тренда — закрытие в направлении + follow-through. Для
+        боковика — чёткое закрытие за границей диапазона.
+        """
+        closes = [c.close for c in candles]
+        n = len(closes)
+        res = _ConfirmResult()
+        start = cand.candidate_index + 1
+        if start >= n:
+            return res
+        conf_bars = CONFIG.structure.confirmation_bars
+        retreat = CONFIG.structure.confirmation_retreat_fraction
+
+        if cand.family == "breakout_level":
+            level = cand.breakout_level
+            dist = max(cand.breakout_distance, 1e-9)
+            breakout_i = None
+            for i in range(start, n):
+                if cand.direction == "up" and closes[i] > level:
+                    breakout_i = i
+                    break
+                if cand.direction == "down" and closes[i] < level:
+                    breakout_i = i
+                    break
+            if breakout_i is None:
+                return res
+            end = breakout_i + conf_bars
+            if end >= n:
+                return res
+            for k in range(breakout_i + 1, end + 1):
+                if cand.direction == "up" and closes[k] < level - retreat * dist:
+                    res.invalidated = True
+                    return res
+                if cand.direction == "down" and closes[k] > level + retreat * dist:
+                    res.invalidated = True
+                    return res
+            res.confirmed = True
+            res.confirmation_index = end
+            res.direction = cand.direction
+            return res
+
+        if cand.family == "breakout_channel":
+            dist = max(cand.breakout_distance, 1e-9)
+            breakout_i = None
+            brk_dir = ""
+            for i in range(start, n):
+                upper = cand.upper_int + cand.upper_slope * i
+                lower = cand.lower_int + cand.lower_slope * i
+                if cand.direction in ("up", "both") and closes[i] > upper:
+                    breakout_i, brk_dir = i, "up"
+                    break
+                if cand.direction in ("down", "both") and closes[i] < lower:
+                    breakout_i, brk_dir = i, "down"
+                    break
+            if breakout_i is None:
+                return res
+            end = breakout_i + conf_bars
+            if end >= n:
+                return res
+            for k in range(breakout_i + 1, end + 1):
+                upper = cand.upper_int + cand.upper_slope * k
+                lower = cand.lower_int + cand.lower_slope * k
+                if brk_dir == "up" and closes[k] < upper - retreat * dist:
+                    res.invalidated = True
+                    return res
+                if brk_dir == "down" and closes[k] > lower + retreat * dist:
+                    res.invalidated = True
+                    return res
+            res.confirmed = True
+            res.confirmation_index = end
+            res.direction = brk_dir
+            return res
+
+        if cand.family == "trend":
+            ref = closes[cand.candidate_index]
+            for i in range(start, n - 1):
+                if cand.direction == "up" and closes[i] > ref and closes[i + 1] >= closes[i]:
+                    res.confirmed = True
+                    res.confirmation_index = i + 1
+                    res.direction = "up"
+                    return res
+                if cand.direction == "down" and closes[i] < ref and closes[i + 1] <= closes[i]:
+                    res.confirmed = True
+                    res.confirmation_index = i + 1
+                    res.direction = "down"
+                    return res
+            return res
+
+        if cand.family == "range":
+            upper = cand.upper_level
+            lower = cand.lower_level
+            margin = retreat * max(upper - lower, 1e-9) * 0.2
+            for i in range(start, n):
+                if closes[i] > upper + margin:
+                    res.confirmed = True
+                    res.confirmation_index = i
+                    res.direction = "up"
+                    return res
+                if closes[i] < lower - margin:
+                    res.confirmed = True
+                    res.confirmation_index = i
+                    res.direction = "down"
+                    return res
+            return res
+
+        return res
+
+    def _map_pivots_to_raw(self, norm_pivots: List[PivotPoint], closes: np.ndarray) -> List[PivotPoint]:
+        """Переносит пивоты из нормализованного/ресэмплированного пространства
+        (индексы 0..resample_points-1) в РЕАЛЬНОЕ пространство баров.
+
+        Детектор пивотов настроен на нормализованную линию из ``resample_points``
+        точек, поэтому на «сырых» свечах он недонаходит пивоты. Здесь каждый
+        нормализованный пивот привязывается к ближайшему реальному экстремуму
+        (в окне ±2 бара), что даёт точные цены и индексы баров.
+        """
+        n_raw = len(closes)
+        rp = self.resample_points
+        raw_pivots: List[PivotPoint] = []
+        seen = set()
+        for p in norm_pivots:
+            approx = int(round(p.index / (rp - 1) * (n_raw - 1))) if rp > 1 else 0
+            approx = min(max(approx, 0), n_raw - 1)
+            lo = max(0, approx - 2)
+            hi = min(n_raw, approx + 3)
+            window = closes[lo:hi]
+            if len(window) == 0:
+                continue
+            off = int(np.argmax(window)) if p.is_high else int(np.argmin(window))
+            idx = lo + off
+            if idx in seen:
+                continue
+            seen.add(idx)
+            raw_pivots.append(PivotPoint(
+                index=idx,
+                value=float(closes[idx]),
+                is_high=p.is_high,
+                relative_position=idx / (n_raw - 1) if n_raw > 1 else 0.0,
+                prominence=p.prominence,
+                confidence=p.confidence,
+            ))
+        raw_pivots.sort(key=lambda pv: pv.index)
+        return raw_pivots
+
+    def extract_features_causal(self, candles) -> Optional[StructureFeatures]:
+        """Каузальная детекция: классифицирует структуру и подтверждает её,
+        используя только информацию до текущей закрытой свечи включительно.
+
+        Возвращает StructureFeatures с заполненными полями ``candidate_*`` /
+        ``confirmation_*`` / ``is_confirmed`` / ``is_invalidated``. Несуществующие
+        каузальные кандидаты помечаются как неподтверждённые.
+        """
+        if not candles or len(candles) < 11:
+            return None
+        closes = np.array([c.close for c in candles], dtype=float)
+        volumes = np.array([c.volume for c in candles], dtype=float)
+        base = self.extract_features(closes, volumes)
+        if base is None:
+            return None
+
+        highs = np.array([c.high for c in candles], dtype=float)
+        lows = np.array([c.low for c in candles], dtype=float)
+        volatility_scale = compute_volatility_scale(highs, lows, closes)
+
+        normalized_line = self.normalize_line(closes)
+        norm_pivots = self.detect_pivots(normalized_line)
+        raw_pivots = self._map_pivots_to_raw(norm_pivots, closes)
+        cand = self._build_candidate(base.structure_type, closes, raw_pivots, candles,
+                                     volatility_scale=volatility_scale)
+        if cand is None:
+            base.candidate_index = -1
+            base.candidate_time = -1
+            base.confirmation_index = -1
+            base.confirmation_time = -1
+            base.is_confirmed = False
+            base.is_invalidated = False
+            base.is_pattern_active = False
+            base.pattern_freshness = 0.5
+            return base
+
+        base.candidate_index = int(cand.candidate_index)
+        base.candidate_time = int(candles[cand.candidate_index].open_time)
+        base.structure_type = cand.structure_type
+        base.pattern_confidence = float(cand.confidence)
+        base.detected_patterns = dict(base.detected_patterns or {})
+        base.detected_patterns[cand.structure_type.value] = float(cand.confidence)
+
+        res = self._confirm_candidate(cand, candles)
+        if res.confirmed:
+            base.is_confirmed = True
+            base.is_invalidated = False
+            base.confirmation_index = int(res.confirmation_index)
+            base.confirmation_time = int(candles[res.confirmation_index].open_time)
+        elif res.invalidated:
+            base.is_confirmed = False
+            base.is_invalidated = True
+            base.confirmation_index = -1
+            base.confirmation_time = -1
+        else:
+            base.is_confirmed = False
+            base.is_invalidated = False
+            base.confirmation_index = -1
+            base.confirmation_time = -1
+
+        base.is_pattern_active = base.is_confirmed and not base.is_invalidated
+        base.pattern_freshness = 1.0 if base.is_confirmed else (0.0 if base.is_invalidated else 0.5)
+        return base
 
     def _detect_trend(self, pivots: List[PivotPoint], line: np.ndarray, trend_slope: float) -> Tuple[bool, str, float]:
         n = len(line)
@@ -1164,14 +1894,14 @@ class StructureExtractor:
         slope, intercept, r_value, _, _ = linregress(x, line)
         r_sq = r_value ** 2
 
-        if overall_move > 0.15 and (hh_ratio >= 0.5 or hl_ratio >= 0.5):
+        if overall_move > CONFIG.pattern.trend_move_threshold and (hh_ratio >= CONFIG.pattern.swing_ratio_threshold or hl_ratio >= CONFIG.pattern.swing_ratio_threshold):
             pivot_score = (hh_ratio + hl_ratio) / 2
             move_score = min(1.0, abs(overall_move))
             conf = move_score * 0.35 + pivot_score * 0.35 + r_sq * 0.3
             if conf > 0.35:
                 return True, "up", min(1.0, conf)
 
-        if overall_move < -0.15 and (lh_ratio >= 0.5 or ll_ratio >= 0.5):
+        if overall_move < -CONFIG.pattern.trend_move_threshold and (lh_ratio >= CONFIG.pattern.swing_ratio_threshold or ll_ratio >= CONFIG.pattern.swing_ratio_threshold):
             pivot_score = (lh_ratio + ll_ratio) / 2
             move_score = min(1.0, abs(overall_move))
             conf = move_score * 0.35 + pivot_score * 0.35 + r_sq * 0.3
@@ -1418,8 +2148,14 @@ class StructureExtractor:
 
         is_triangle, triangle_conf, tri_active = self._detect_triangle(pivots, line, compression)
         if is_triangle:
-            candidates.append((StructureType.TRIANGLE, triangle_conf))
-            active_map[StructureType.TRIANGLE] = tri_active
+            tri_type = self._triangle_subtype(pivots, line)
+            candidates.append((tri_type, triangle_conf))
+            active_map[tri_type] = tri_active
+
+        is_channel, channel_type, channel_conf, channel_active = self._detect_channel(pivots, line)
+        if is_channel:
+            candidates.append((channel_type, channel_conf))
+            active_map[channel_type] = channel_active
 
         if abs(trend) < 0.1 and overall_move < 0.2:
             highs = [p.value for p in pivots if p.is_high]
@@ -1562,7 +2298,9 @@ class StructureExtractor:
             detected_patterns=detected_patterns,
             is_pattern_active=is_active,
             pattern_freshness=freshness,
-            volume_confirmation=vol_conf
+            volume_confirmation=vol_conf,
+            is_confirmed=is_active,
+            is_invalidated=not is_active
         )
     
     def extract_from_candles(self, closes: List[float], volumes: List[float] = None) -> Optional[StructureFeatures]:
