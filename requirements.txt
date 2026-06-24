@@ -10,3 +10,15 @@ scipy>=1.16.3
 uvicorn>=0.38.0
 websockets>=15.0.1
 aiohttp>=3.9.0
+aiohttp
+aiosqlite
+fastapi
+numpy
+opencv-python-headless
+pillow
+python-multipart
+python-binance
+scikit-learn
+scipy
+uvicorn
+websockets
