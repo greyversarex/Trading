@@ -1,2 +1,3 @@
 - [Pattern detector design](pattern-detectors.md) — how new causal pattern detectors plug into extract_features_causal via priority builders + same confirmation machinery.
 - [ML relevance filter](ml-relevance-filter.md) — ml_score gate must be applied identically on every scan path (live + initial burst); filter cuts FPs only, recall is bounded by detectors.
+- [Synthetic validation measurement](synthetic-validation-measurement.md) — validate.py/setsid logs are empty & full-dataset runner OOMs here; measure recall/FPR via foreground `timeout 115 python -u` calling extract_features_causal directly.

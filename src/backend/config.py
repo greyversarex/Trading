@@ -28,6 +28,17 @@ class DataConfig:
     error_sleep_sec: float = 10.0
     batch_sleep_sec: float = 0.15
 
+    # Real-time feed (Phase 3.1)
+    use_websocket: bool = True
+    ws_reconnect_max_delay_sec: float = 30.0
+    ws_heartbeat_interval_sec: float = 30.0
+    # Сколько ждать первого успешного подключения WS перед фаллбэком на REST.
+    ws_startup_timeout_sec: float = 10.0
+
+    # Performance (Phase 3.3)
+    max_concurrent_symbol_tasks: int = 10
+    cache_structures: bool = True
+
 
 @dataclass
 class StructureConfig:
@@ -99,11 +110,19 @@ class PatternConfig:
     # Missing patterns (Phase 2.2). Допуски — доли ценового диапазона либо
     # множители volatility_scale, как у каузальных детекторов из Phase 1.
     triple_top_tolerance: float = 0.035
+    # Ослабленный допуск асимметрии вершин (Phase 3.4): когда у тройной вершины
+    # есть чёткий нэклайн (выраженная глубина), разрешаем большую разницу высот
+    # вершин — иначе паттерн ошибочно классифицируется как двойная вершина.
+    triple_top_asymmetry_tolerance: float = 0.06
     triple_top_min_conf: float = 0.45
     triple_bottom_tolerance: float = 0.035
     triple_bottom_min_conf: float = 0.45
     cup_and_handle_depth_min: float = 0.08      # мин. глубина чаши (доля диапазона)
     cup_and_handle_handle_retrace_max: float = 0.5  # макс. откат ручки от глубины чаши
+    # Ослабленный предел отката ручки (Phase 3.4): используется в fallback-ветке,
+    # когда левый край чаши не оформлен отдельным пивотом-хаем. Также допускается
+    # «чаша без ручки» (cup without handle) при выраженной симметричной чаше.
+    cup_and_handle_relaxed_handle_retrace_max: float = 0.7
     cup_and_handle_min_conf: float = 0.45
     pennant_pole_min_move: float = 0.12         # мин. движение полюса (доля цены)
     pennant_convergence_min: float = 0.15       # мин. схождение границ вымпела

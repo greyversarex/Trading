@@ -194,3 +194,46 @@ def test_enum_values_stable():
     assert StructureType.CUP_AND_HANDLE.value == "cup_and_handle"
     assert StructureType.PENNANT.value == "pennant"
     assert StructureType.ROUNDING_BOTTOM.value == "rounding_bottom"
+
+
+# --- 6. Phase 3.4: повышение recall (edge cases) ---------------------------
+
+def test_phase34_config_knobs_present():
+    """Новые тюнинговые параметры объявлены и имеют разумные значения."""
+    from src.backend.config import CONFIG
+    assert CONFIG.pattern.triple_top_asymmetry_tolerance > CONFIG.pattern.triple_top_tolerance
+    assert (CONFIG.pattern.cup_and_handle_relaxed_handle_retrace_max
+            > CONFIG.pattern.cup_and_handle_handle_retrace_max)
+
+
+def test_cup_without_handle_detected(ext, gen):
+    """«Чаша без ручки» (fallback 3.4): U-образная чаша с восстановлением к кромке
+    и пробоем вверх, но БЕЗ отката-ручки (область ручки выровнена по кромке).
+    Хотя бы на одном из сидов попадает в detected_patterns через fallback."""
+    found = False
+    for seed in range(16):
+        walk = gen.generate_random_walk(n=100, start_price=100.0, volatility=0.005, seed=seed)
+        candles = gen.inject_cup_and_handle(walk, 12, 64, 82)
+        closes = np.array([c.close for c in candles], dtype=float)
+        closes[64:82] = closes[12]  # убираем ручку: плоско на уровне кромки
+        f = ext.extract_features(closes)
+        if f and "cup_and_handle" in (f.detected_patterns or {}):
+            found = True
+            break
+    assert found, "чаша без ручки не распознана ни на одном сиде (fallback не сработал)"
+
+
+def test_triple_top_asymmetric_peaks_detected(ext, gen):
+    """Тройная вершина с НЕравными по высоте пиками (повышенный peak_noise) и
+    чётким пробоем нэклайна распознаётся благодаря ослабленному допуску
+    асимметрии (3.4). Достаточно одного сида из набора."""
+    found = False
+    for seed in range(16):
+        walk = gen.generate_random_walk(n=100, start_price=100.0, volatility=0.005, seed=seed)
+        candles = gen.inject_triple_top(walk, 12, 78, peak_noise=0.01)
+        closes = np.array([c.close for c in candles], dtype=float)
+        f = ext.extract_features(closes)
+        if f and "triple_top" in (f.detected_patterns or {}):
+            found = True
+            break
+    assert found, "асимметричная тройная вершина не распознана ни на одном сиде"

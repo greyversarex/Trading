@@ -73,6 +73,8 @@ class BinanceScanner:
         self._api_failures: int = 0
         self.initialized: bool = False
         self._candle_hashes: Dict[str, int] = {}
+        # Real-time WebSocket feed (Phase 3.1); None при REST-режиме/фаллбэке.
+        self.ws_feed: Optional[Any] = None
     
     def _get_default_symbols(self) -> List[str]:
         """Return default crypto symbols."""
@@ -298,7 +300,7 @@ class BinanceScanner:
         
         logger.info(f"Fetching real market data from Binance API...")
         await self._update_all_candles(progress_callback=progress_callback)
-        self._update_all_structures()
+        await self._update_all_structures_async()
         
         real_symbols = [sym for sym in self.symbols if sym not in self._invalid_symbols]
         skipped_symbols = [sym for sym in self.symbols if sym in self._invalid_symbols]
@@ -324,7 +326,7 @@ class BinanceScanner:
         
         total = len(tasks)
         done = 0
-        batch_size = 10
+        batch_size = max(1, CONFIG.data.max_concurrent_symbol_tasks)
         
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             for i in range(0, total, batch_size):
@@ -362,10 +364,15 @@ class BinanceScanner:
     WINDOW_SIZES = list(CONFIG.data.window_sizes)
 
     def _candle_hash(self, closes: list) -> int:
-        """Quick hash of close prices to detect changes."""
+        """Хэш ряда close-цен для детекции изменений (кэш структур, Phase 3.3).
+
+        Хэшируем весь ряд (а не 3–4 точки), чтобы не пропустить изменения в
+        середине окна: при ложном совпадении хэша структура не пересчиталась бы
+        и результат устарел. Для 100 свечей это дёшево.
+        """
         if len(closes) < 3:
             return 0
-        return hash((len(closes), closes[0], closes[-1], closes[len(closes)//2]))
+        return hash((len(closes),) + tuple(closes))
 
     def _update_structure(self, symbol: str, timeframe: str) -> bool:
         """Update structure for a symbol/timeframe with sliding windows. Returns True if structure changed."""
@@ -381,9 +388,10 @@ class BinanceScanner:
 
         cache_key = f"{symbol}_{timeframe}"
         new_hash = self._candle_hash(closes)
-        if cache_key in self._candle_hashes and self._candle_hashes[cache_key] == new_hash:
-            return False
-        self._candle_hashes[cache_key] = new_hash
+        if CONFIG.data.cache_structures:
+            if cache_key in self._candle_hashes and self._candle_hashes[cache_key] == new_hash:
+                return False
+            self._candle_hashes[cache_key] = new_hash
 
         features = self.structure_extractor.extract_from_candles(closes, volumes)
         
@@ -416,6 +424,35 @@ class BinanceScanner:
         for symbol in self.symbols:
             for timeframe in self.TIMEFRAMES.keys():
                 self._update_structure(symbol, timeframe)
+
+    async def _update_all_structures_async(self):
+        """Параллельный пересчёт структур по символам (Phase 3.3).
+
+        Расчёт структуры — CPU-bound (numpy/scipy освобождают GIL), поэтому
+        выносим его в пул потоков батчами по ``max_concurrent_symbol_tasks``.
+        По символу (а не по символ/ТФ) — чтобы один поток последовательно
+        обрабатывал все ТФ символа и не было гонок за один и тот же объект.
+        """
+        batch_size = max(1, CONFIG.data.max_concurrent_symbol_tasks)
+
+        def _update_symbol_all_tfs(sym: str):
+            for timeframe in self.TIMEFRAMES.keys():
+                self._update_structure(sym, timeframe)
+
+        symbols = list(self.symbols)
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            results = await asyncio.gather(
+                *(asyncio.to_thread(_update_symbol_all_tfs, sym) for sym in batch),
+                return_exceptions=True,
+            )
+            # Не «глотаем» ошибки потоков: логируем, чтобы частичная
+            # инициализация была видимой (режим degraded, а не тихий сбой).
+            for sym, res in zip(batch, results):
+                if isinstance(res, Exception):
+                    logger.error(
+                        "Ошибка пересчёта структур для %s: %s", sym, res
+                    )
     
     async def _poll_loop(self):
         """Main polling loop for updating candle data."""
@@ -446,14 +483,44 @@ class BinanceScanner:
         
         await self.initialize_symbols(progress_callback=progress_callback)
         self.initialized = True
-        
-        self._poll_task = asyncio.create_task(self._poll_loop())
-    
+
+        # Real-time режим: WebSocket-фид при включённом флаге, иначе REST-поллинг.
+        if CONFIG.data.use_websocket:
+            started = await self._start_ws_feed()
+            if not started:
+                logger.warning("WS-фид не запущен, фаллбэк на REST-поллинг")
+                self._poll_task = asyncio.create_task(self._poll_loop())
+        else:
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+    async def _start_ws_feed(self) -> bool:
+        """Поднять WebSocket-фид Binance. Возвращает False при ошибке (→ фаллбэк)."""
+        try:
+            from .binance_ws_feed import BinanceWebSocketFeed
+
+            self.ws_feed = BinanceWebSocketFeed(self, on_update=self.on_update_callback)
+            started = await self.ws_feed.start(self.symbols, list(self.TIMEFRAMES.keys()))
+            if not started:
+                self.ws_feed = None
+                return False
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Ошибка запуска WS-фида: {e}")
+            self.ws_feed = None
+            return False
+
     async def stop(self):
         """Stop the scanner."""
         self.is_running = False
         self.initialized = False
-        
+
+        if self.ws_feed is not None:
+            try:
+                await self.ws_feed.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self.ws_feed = None
+
         if self._poll_task:
             self._poll_task.cancel()
             try:

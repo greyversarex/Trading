@@ -1634,13 +1634,17 @@ class StructureExtractor:
                       CONFIG.pattern.double_top_atr_mult * volatility_scale)
         if tol_abs <= 0:
             return None
+        # Ослабленный допуск асимметрии: применяется при чётком нэклайне (глубина
+        # > 0.15 диапазона), чтобы тройные вершины с неравными по высоте пиками
+        # не отбрасывались в пользу double_top.
+        tol_relaxed = max(CONFIG.pattern.triple_top_asymmetry_tolerance * price_range,
+                          tol_abs)
         best, best_conf = None, 0.0
         for i in range(len(highs) - 2):
             for j in range(i + 1, len(highs) - 1):
                 for k in range(j + 1, len(highs)):
                     peaks = [highs[i].value, highs[j].value, highs[k].value]
-                    if (max(peaks) - min(peaks)) >= tol_abs:
-                        continue
+                    peak_spread = max(peaks) - min(peaks)
                     t1 = [p for p in pivots if not p.is_high and highs[i].index < p.index < highs[j].index]
                     t2 = [p for p in pivots if not p.is_high and highs[j].index < p.index < highs[k].index]
                     if not t1 or not t2:
@@ -1650,7 +1654,11 @@ class StructureExtractor:
                     depth = (avg_peak - neckline) / price_range
                     if depth <= 0.10:
                         continue
-                    spread = (max(peaks) - min(peaks)) / tol_abs
+                    # Чёткий нэклайн => допускаем большую асимметрию вершин.
+                    eff_tol = tol_relaxed if depth > 0.15 else tol_abs
+                    if peak_spread >= eff_tol:
+                        continue
+                    spread = peak_spread / eff_tol
                     conf = (1.0 - spread) * 0.5 + min(1.0, depth / 0.3) * 0.5
                     if conf > best_conf:
                         best_conf = conf
@@ -1755,7 +1763,92 @@ class StructureExtractor:
                         breakout_level=float(max(L.value, R.value)),
                         breakout_distance=float(rim - cup_bottom.value),
                     )
-        return best
+        if best is not None:
+            return best
+        # Fallback (Phase 3.4): строгая ветка часто не находит ОБЕ кромки чаши как
+        # отдельные пивоты-хаи (левая кромка тонет в предшествующем шуме). Тогда
+        # определяем кромки по максимумам close слева/справа от дна чаши, а ручку
+        # ищем по ослабленному откату; при её отсутствии допускаем «чашу без ручки».
+        return self._candidate_cup_fallback(closes, lows, price_range)
+
+    def _candidate_cup_fallback(self, closes: np.ndarray, lows: List[PivotPoint],
+                                price_range: float) -> Optional[_PatternCandidate]:
+        n = len(closes)
+        if not lows or n < 20 or price_range <= 0:
+            return None
+        # Дно чаши — самый глубокий низовой пивот в средней части ряда.
+        mid_lows = [p for p in lows if 0.15 * n < p.index < 0.85 * n]
+        if not mid_lows:
+            return None
+        cup_bottom = min(mid_lows, key=lambda p: p.value)
+        bi = int(cup_bottom.index)
+        if bi < 6 or bi > n - 6:
+            return None
+        # Левая кромка — максимум close слева от дна (там нет пробоя).
+        left_seg, right_seg = closes[:bi], closes[bi + 1:]
+        if len(left_seg) < 3 or len(right_seg) < 3:
+            return None
+        li = int(np.argmax(left_seg))
+        left_rim = float(closes[li])
+        # Левая кромка должна быть в начале ряда (широкая U-форма), иначе fallback
+        # ошибочно срабатывает на трендах/каналах с локальной ямой.
+        if li > 0.40 * n:
+            return None
+        # Правая кромка — ПИК восстановления, примерно симметричный левой кромке
+        # относительно дна (≈ bi + span). Нельзя брать ни первое пересечение уровня
+        # кромки (даёт точку НИЖЕ кромки → ложная асимметрия), ни глобальный максимум
+        # хвоста (там финальный пробой ВЫШЕ кромки). Ищем максимум close в узком окне
+        # ~[0.6..1.4]·span за дном, исключающем зону пробоя.
+        span = bi - li
+        if span < 4:
+            return None
+        r_start = bi + max(2, int(0.6 * span))
+        r_end = min(n, bi + int(1.4 * span) + 1)
+        if r_end - r_start < 1:
+            return None
+        ri = r_start + int(np.argmax(closes[r_start:r_end]))
+        # Правая кромка должна быть во второй половине ряда (симметрия U-формы).
+        if ri < 0.55 * n:
+            return None
+        right_rim = float(closes[ri])
+        rim = min(left_rim, right_rim)
+        depth = (rim - cup_bottom.value) / price_range
+        if depth < CONFIG.pattern.cup_and_handle_depth_min:
+            return None
+        # Кромки должны быть сопоставимы по высоте (U-, не V-/L-форма).
+        if abs(left_rim - right_rim) / max(price_range, 1e-9) >= 0.10:
+            return None
+        mid = (li + ri) / 2.0
+        half = (ri - li) / 2.0
+        symmetry = 1.0 - min(1.0, abs(bi - mid) / max(half, 1e-9))
+        if symmetry < 0.3:
+            return None
+        depth_abs = max(rim - cup_bottom.value, 1e-9)
+        # Ручка: откат после правой кромки (минимум close в хвосте).
+        handle_seg = closes[ri + 1:]
+        handle_retrace = 0.0
+        handle_idx = ri
+        if len(handle_seg) >= 2:
+            h_rel = int(np.argmin(handle_seg))
+            handle_idx = ri + 1 + h_rel
+            handle_retrace = (right_rim - float(closes[handle_idx])) / depth_abs
+        relaxed_max = CONFIG.pattern.cup_and_handle_relaxed_handle_retrace_max
+        has_handle = 0.0 < handle_retrace <= relaxed_max
+        # Допускаем «чашу без ручки»: ручка незначительна или отсутствует.
+        if handle_retrace > relaxed_max:
+            return None
+        handle_pen = (1.0 - min(handle_retrace, 1.0)) if has_handle else 0.7
+        conf = symmetry * 0.4 + handle_pen * 0.3 + min(1.0, depth / 0.3) * 0.3
+        conf *= 0.9  # fallback менее уверен, чем строгая ветка
+        return _PatternCandidate(
+            structure_type=StructureType.CUP_AND_HANDLE,
+            confidence=conf,
+            candidate_index=int(handle_idx),
+            family="breakout_level",
+            direction="up",
+            breakout_level=float(max(left_rim, right_rim)),
+            breakout_distance=float(rim - cup_bottom.value),
+        )
 
     def _candidate_pennant(self, closes: np.ndarray, pivots: List[PivotPoint],
                            volatility_scale: float = 0.0) -> Optional[_PatternCandidate]:

@@ -1,0 +1,129 @@
+You are a senior Python / full-stack developer working on a FastAPI crypto chart scanner. Phase 0, 1, and 2 are complete (see UPGRADE_LOG.md and PHASE02_REPORT.md). The project now has:
+
+Centralized src/backend/config.py.
+Causal, non-repainting pattern detection in src/backend/structure_extractor.py.
+ATR-adaptive thresholds.
+LevelDetectorV2 with DBSCAN, RANSAC, volume profile, round numbers.
+5 new pattern detectors (triple top/bottom, cup-and-handle, pennant, rounding bottom).
+Synthetic labeled dataset and a trained RandomForest ML filter (data/ml_relevance_model.pkl).
+106 passing tests.
+Implement Phase 3 Minimal: real-time WebSocket data, configurable UI, chart visualization, performance optimization, and recall improvements. Do not implement alerts or export. Work incrementally, test each sub-phase, and create PHASE03_REPORT.md.
+
+Global constraints
+Python 3.11 + FastAPI + existing deps (websockets, aiohttp).
+Keep REST/WebSocket contracts backward-compatible. New fields/routes are allowed.
+Keep the app runnable with python run.py after every sub-phase.
+Use CONFIG from src/backend/config.py for new tunables.
+Update UPGRADE_LOG.md after each sub-phase.
+Create PHASE03_REPORT.md at the end.
+Do not implement Telegram/Discord alerts.
+Do not implement CSV/JSON export.
+Sub-phase 3.1 — Real-time Binance WebSocket data feed
+Replace the 60-second REST polling loop with a WebSocket connection to Binance for klines. The existing server↔browser WebSocket (/ws) remains unchanged.
+
+Create src/backend/binance_ws_feed.py:
+
+Class BinanceWebSocketFeed (async).
+Methods:
+async start(symbols: List[str], timeframes: List[str]) — subscribe to wss://stream.binance.com:9443/ws or combined stream; stream name format {symbol.lower()}@kline_{timeframe}.
+async stop() — graceful close.
+async _on_message(raw) — parse JSON, update in-memory candles in BinanceScanner.symbol_data, and trigger market-update callbacks.
+Automatic reconnect with exponential backoff (max 30 s).
+Keep REST polling as fallback if CONFIG.data.use_websocket is False.
+Update src/backend/binance_scanner.py:
+
+Add ws_feed: Optional[BinanceWebSocketFeed].
+In start(), start WebSocket if enabled; otherwise use existing REST poll loop.
+Update src/backend/config.py:
+
+Add use_websocket: bool = True, ws_reconnect_max_delay_sec: float = 30.0, ws_heartbeat_interval_sec: float = 30.0 to DataConfig.
+Tests: tests/test_binance_ws_feed.py — mock kline message, reconnect, REST fallback.
+
+Run:
+
+Bash
+
+python -m pytest tests/test_binance_ws_feed.py -v
+python run.py
+Append results to UPGRADE_LOG.md.
+
+Sub-phase 3.2 — Configurable UI panel + visualization
+Modify static/index.html carefully.
+
+Add a collapsible "Settings" panel with controls for:
+
+structure.min_quality (slider 0.1–0.9, step 0.05).
+pattern.double_top_min_conf, pattern.hs_min_conf, pattern.flag_min_conf, pattern.wedge_min_conf, pattern.triangle_min_conf (sliders 0.1–0.9).
+level.min_touches (number 2–8).
+level_v2_min_strength (slider 0.1–1.0).
+ml_score_threshold (slider 0.0–1.0, step 0.05).
+structure.confirmation_bars (number 0–5).
+data.use_websocket (toggle).
+"Save & Reload" button → POST /api/settings then restart scan.
+Backend endpoints:
+
+GET /api/settings — returns UI-relevant config values.
+POST /api/settings — validates, updates in-memory CONFIG, persists to data/ui_settings.json, reloads on next startup.
+POST /api/restart-scan — stops current scan and restarts with latest settings.
+Visualization:
+
+In match detail modal, render pattern boundaries (neckline, triangle edges, channel lines) as lightweight-charts overlays if available.
+Render /api/levels-v2 support_levels, resistance_levels, and trendlines on the chart.
+Display ml_score badge next to each match (red <0.5, yellow 0.5–0.8, green >0.8).
+Show small ml_score_distribution histogram from /api/ml-status if available.
+After this sub-phase, run python run.py and verify the UI manually. Append to UPGRADE_LOG.md.
+
+Sub-phase 3.3 — Performance optimization
+Caching:
+
+In src/backend/binance_scanner.py, cache structures by candle hash. If no new closed bars for a symbol/timeframe, reuse the last computed StructureFeatures.
+Parallelism:
+
+In run_initial_scan and on_market_update, process symbols with asyncio.gather in batches of CONFIG.data.max_concurrent_symbol_tasks (default 10).
+Config:
+
+Add max_concurrent_symbol_tasks: int = 10 and cache_structures: bool = True to DataConfig.
+Tests: tests/test_performance.py — cache reuse and concurrent processing.
+
+Run:
+
+Bash
+
+python -m pytest tests/test_performance.py -v
+python run.py
+Append to UPGRADE_LOG.md.
+
+Sub-phase 3.4 — Improve recall for weak pattern detectors
+The Phase 2 report showed low recall for cup_and_handle (43.33%) and triple_top (60%). Improve them without hurting precision or ML FPR.
+
+In src/backend/structure_extractor.py:
+
+cup_and_handle: relax handle retrace slightly, allow "cup without handle" sub-label, use volume profile to confirm accumulation at cup bottom.
+triple_top: allow slightly asymmetric peaks if neckline is clear, reduce spacing symmetry penalty for visually clear triple tops.
+Add config knobs: cup_and_handle_relaxed_handle_retrace_max, triple_top_asymmetry_tolerance.
+Re-run synthetic validation:
+
+Bash
+
+python scripts/generate_synthetic.py
+python scripts/train_ml.py
+python scripts/validate.py --synthetic
+Target: cup_and_handle recall ≥ 65%, triple_top recall ≥ 75%, FPR after ML filter ≤ 1%.
+
+Tests: update tests/test_missing_patterns.py with new edge cases.
+
+Append results to UPGRADE_LOG.md.
+
+Final deliverables for Phase 3 Minimal
+After completing all sub-phases, ensure:
+
+src/backend/binance_ws_feed.py with real-time feed and REST fallback.
+Updated static/index.html with Settings panel, ML score badges, level/trendline/pattern overlays.
+/api/settings, /api/restart-scan endpoints and data/ui_settings.json persistence.
+Performance cache and concurrency in binance_scanner.py.
+Improved recall for cup-and-handle and triple-top.
+New tests: test_binance_ws_feed.py, test_performance.py, updated test_missing_patterns.py.
+Target: ≥ 115 tests passing.
+Updated UPGRADE_LOG.md.
+New PHASE03_REPORT.md with summary, WebSocket vs REST latency notes, UI changes, performance improvement, and final recall numbers.
+After you finish, tell the user to copy PHASE03_REPORT.md and UPGRADE_LOG.md back to the AI assistant for final review.

@@ -21,6 +21,7 @@ from .fibonacci_analyzer import FibonacciAnalyzer
 from .level_detector import LevelDetector
 from .level_detector_v2 import LevelDetectorV2
 from .config import CONFIG
+from . import settings_store
 from .ml.pipeline import MLPipeline
 from .ml.trainer import ModelTrainer
 from .synthetic import SyntheticChartGenerator
@@ -75,6 +76,19 @@ search_level_v2_min_strength: float = 0.5
 # --- ML-фильтр релевантности (фаза 2.4) ---
 ml_pipeline: MLPipeline = MLPipeline(model_path=CONFIG.ml.ml_model_path)
 ml_score_threshold: float = CONFIG.ml.ml_score_threshold
+# Кольцевой буфер недавних ml_score для гистограммы распределения (Phase 3.2).
+from collections import deque as _deque
+_recent_ml_scores: "_deque[float]" = _deque(maxlen=1000)
+
+
+def _score_and_record(features, candle_history, timeframe_minutes: float = 0.0) -> float:
+    """Считает ml_score и пишет его в кольцевой буфер для распределения."""
+    s = ml_pipeline.score_features(
+        features, candle_history, timeframe_minutes=timeframe_minutes
+    )
+    if ml_pipeline.model_exists:
+        _recent_ml_scores.append(float(s))
+    return s
 # Если модель уже есть на старте — считаем её «свежей», чтобы не запускать
 # тяжёлое переобучение на первом же тике рынка.
 last_model_retrain: Optional[datetime] = datetime.now() if ml_pipeline.model_exists else None
@@ -204,6 +218,11 @@ class ManualStructureRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     await database.initialize()
+    # Загружаем сохранённые пользовательские настройки (Phase 3.2) и
+    # синхронизируем зависящий от них глобальный порог ML.
+    global ml_score_threshold
+    settings_store.load_settings()
+    ml_score_threshold = CONFIG.ml.ml_score_threshold
 
 
 @app.on_event("shutdown")
@@ -355,7 +374,7 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
             score = round(score, 1)
 
             # ML-фильтр релевантности: считаем ml_score и отсекаем слабые матчи.
-            ml_score = ml_pipeline.score_features(
+            ml_score = _score_and_record(
                 features,
                 scanner.get_candles(sym, base_tf) or [],
                 timeframe_minutes=_tf_minutes(base_tf),
@@ -417,7 +436,7 @@ async def on_market_update_causal_scan(symbol: str, timeframe: str):
     last_close_time = candles[-1].close_time if candles else None
 
     # ML-фильтр релевантности.
-    ml_score = ml_pipeline.score_features(
+    ml_score = _score_and_record(
         features, candles, timeframe_minutes=_tf_minutes(timeframe)
     )
     if ml_pipeline.model_exists and ml_score < ml_score_threshold:
@@ -479,7 +498,7 @@ async def run_initial_causal_scan():
             last_close_time = candles[-1].close_time if candles else None
 
             # ML-фильтр релевантности.
-            ml_score = ml_pipeline.score_features(
+            ml_score = _score_and_record(
                 features, candles, timeframe_minutes=_tf_minutes(timeframe)
             )
             if ml_pipeline.model_exists and ml_score < ml_score_threshold:
@@ -1051,7 +1070,11 @@ async def run_continuous_scan():
     
     try:
         scanner.on_update_callback = on_market_update
-        if not scanner._poll_task or scanner._poll_task.done():
+        # При WebSocket-режиме поток данных идёт через ws_feed; REST-поллинг
+        # запускаем только если WS выключен (или не поднялся → фаллбэк).
+        if scanner.ws_feed is not None:
+            scanner.ws_feed.on_update = on_market_update
+        elif not scanner._poll_task or scanner._poll_task.done():
             if scanner.initialized:
                 scanner._poll_task = asyncio.create_task(scanner._poll_loop())
         await asyncio.Future()
@@ -1156,7 +1179,7 @@ async def run_initial_type_scan():
 
             # ML-фильтр релевантности (как в live-пути type_scan): считаем
             # ml_score и отсекаем слабые матчи при наличии обученной модели.
-            ml_score = ml_pipeline.score_features(
+            ml_score = _score_and_record(
                 features,
                 scanner.get_candles(sym, base_tf) or [],
                 timeframe_minutes=_tf_minutes(base_tf),
@@ -1636,6 +1659,73 @@ async def get_threshold():
     return {"threshold": scan_threshold}
 
 
+class SettingsUpdate(BaseModel):
+    settings: Dict[str, Any]
+    persist: bool = True
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """Схема настраиваемых параметров с текущими значениями (для UI-панели)."""
+    return {"schema": settings_store.get_schema()}
+
+
+@app.post("/api/settings")
+async def update_settings(data: SettingsUpdate):
+    """Валидирует и применяет настройки к CONFIG в рантайме, опционально
+    сохраняя их в ``data/ui_settings.json``."""
+    global ml_score_threshold
+    try:
+        applied = settings_store.apply_settings(data.settings)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Синхронизируем глобальный порог ML с CONFIG.
+    ml_score_threshold = CONFIG.ml.ml_score_threshold
+
+    if data.persist:
+        settings_store.save_settings()
+
+    await broadcast_message({
+        "type": "settings_updated",
+        "data": {"applied": list(applied.keys())},
+    })
+    return {"applied": applied, "schema": settings_store.get_schema()}
+
+
+@app.post("/api/restart-scan")
+async def restart_scan():
+    """Перезапускает текущее сканирование, чтобы применить новые настройки
+    к свежим результатам (например после изменения порогов/паттернов)."""
+    global scan_task, is_scanning
+
+    was_scanning = is_scanning
+    prev_mode = search_mode
+
+    if scan_task and not scan_task.done():
+        scan_task.cancel()
+        try:
+            await scan_task
+        except asyncio.CancelledError:
+            pass
+    is_scanning = False
+
+    if not was_scanning:
+        return {"status": "idle", "restarted": False}
+
+    # Перезапускаем начальный скан и непрерывное сканирование.
+    await ensure_scanner_initialized()
+    await run_initial_scan()
+    is_scanning = True
+    scan_task = asyncio.create_task(run_continuous_scan())
+
+    await broadcast_message({
+        "type": "scan_restarted",
+        "data": {"mode": prev_mode},
+    })
+    return {"status": "restarted", "restarted": True, "mode": prev_mode}
+
+
 _market_movers_cache: Dict[str, Any] = {"data": [], "timestamp": 0}
 
 @app.get("/api/market-movers")
@@ -1796,6 +1886,17 @@ async def ml_status():
     status["last_model_retrain"] = (
         last_model_retrain.isoformat() if last_model_retrain else None
     )
+    # Гистограмма распределения недавних ml_score (10 бинов 0.0–1.0).
+    bins = [0] * 10
+    scores = list(_recent_ml_scores)
+    for s in scores:
+        idx = min(9, max(0, int(s * 10)))
+        bins[idx] += 1
+    status["ml_score_distribution"] = {
+        "bins": bins,
+        "total": len(scores),
+        "bin_edges": [round(i / 10, 1) for i in range(11)],
+    }
     return status
 
 
