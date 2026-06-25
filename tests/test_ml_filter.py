@@ -201,3 +201,71 @@ def test_feedback_records_with_features_added(dataset, tmp_path, extractor):
     ]
     X2, y2, w2 = trainer.build_training_data(dataset, feedback_records=feedback)
     assert len(X2) == len(base_X) + 2
+
+
+@pytest.mark.skipif(not sklearn_available(), reason="нет scikit-learn")
+def test_trainer_records_n_feedback(dataset, tmp_path, extractor):
+    """train() записывает число валидных записей обратной связи в метаданные."""
+    trainer = ModelTrainer(model_path=str(tmp_path / "nfb.pkl"))
+    sample = dataset[0]
+    candles = [SyntheticChartGenerator.candle_from_dict(c) for c in sample["candles"]]
+    sf = extractor.extract_features_causal(candles)
+    if sf is None:
+        pytest.skip("нет структуры")
+    feats = extract_ml_features(sf, sf.candidate_index, sf.confirmation_index, candles)
+    feedback = [
+        {"is_relevant": True, "features": feats},
+        {"is_relevant": False, "features": feats},
+        {"is_relevant": True},  # без признаков — не считается
+    ]
+    result = trainer.train(dataset, feedback_records=feedback, save=True)
+    assert result["trained"] is True
+    assert result["n_feedback"] == 2
+
+    pipe = MLPipeline(model_path=str(tmp_path / "nfb.pkl"))
+    assert pipe.status()["n_feedback"] == 2
+
+
+def test_hard_filter_inactive_without_feedback(monkeypatch):
+    """Жёсткий ML-фильтр выключен, пока модели нет или мало обратной связи,
+    и включается после накопления достаточного числа записей."""
+    import src.backend.main as m
+
+    monkeypatch.setattr(m.CONFIG.ml, "ml_hard_filter_min_feedback", 20)
+
+    # модель отсутствует -> фильтр выключен
+    monkeypatch.setattr(m.ml_pipeline, "model", None, raising=False)
+    assert m._ml_hard_filter_active() is False
+
+    class _Fake:
+        def __init__(self, n):
+            self.metadata = {"n_feedback": n}
+
+    # модель есть, но мало обратной связи -> выключен
+    monkeypatch.setattr(m.ml_pipeline, "model", _Fake(5), raising=False)
+    assert m._ml_hard_filter_active() is False
+
+    # достаточно обратной связи -> включён
+    monkeypatch.setattr(m.ml_pipeline, "model", _Fake(20), raising=False)
+    assert m._ml_hard_filter_active() is True
+
+
+def test_hard_filter_tolerates_invalid_metadata(monkeypatch):
+    """Битая/устаревшая метадата (нет ключа или нечисловое значение) не должна
+    ронять обработчик скана — фильтр считается выключенным."""
+    import src.backend.main as m
+
+    monkeypatch.setattr(m.CONFIG.ml, "ml_hard_filter_min_feedback", 20)
+
+    class _Model:
+        def __init__(self, meta):
+            self.metadata = meta
+
+    # legacy-модель без ключа n_feedback
+    monkeypatch.setattr(m.ml_pipeline, "model", _Model({}), raising=False)
+    assert m._ml_hard_filter_active() is False
+
+    # нечисловое значение -> безопасный fallback в 0
+    for bad in (None, "abc", object()):
+        monkeypatch.setattr(m.ml_pipeline, "model", _Model({"n_feedback": bad}), raising=False)
+        assert m._ml_hard_filter_active() is False

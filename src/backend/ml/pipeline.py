@@ -82,6 +82,7 @@ class MLPipeline:
             "model_exists": True,
             "last_trained_at": meta.get("trained_at"),
             "n_samples": meta.get("n_samples", 0),
+            "n_feedback": meta.get("n_feedback", 0),
             "accuracy": meta.get("accuracy"),
             "top_features": [{"name": n, "importance": i} for n, i in top_features],
         }

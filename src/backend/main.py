@@ -89,6 +89,31 @@ def _score_and_record(features, candle_history, timeframe_minutes: float = 0.0) 
     if ml_pipeline.model_exists:
         _recent_ml_scores.append(float(s))
     return s
+
+
+def _ml_hard_filter_active() -> bool:
+    """Включён ли ЖЁСТКИЙ ML-фильтр (отсечение матчей ниже порога).
+
+    Модель «из коробки» обучена только на синтетике и плохо переносится на
+    реальный рынок (ставит низкий ml_score почти всем реальным структурам),
+    поэтому жёсткое отсечение по умолчанию ВЫКЛЮЧЕНО — ml_score используется
+    лишь как бейдж и для сортировки. Фильтр включается автоматически, когда
+    модель дообучена минимум на ``ml_hard_filter_min_feedback`` записях
+    реальной обратной связи пользователя.
+    """
+    if not ml_pipeline.model_exists:
+        return False
+    meta = getattr(ml_pipeline.model, "metadata", {}) or {}
+    try:
+        n_feedback = int(meta.get("n_feedback", 0) or 0)
+    except (TypeError, ValueError):
+        # Битая/устаревшая метадата модели — считаем, что реального
+        # feedback нет, фильтр остаётся выключенным.
+        logger.warning("Некорректное значение n_feedback в метаданных модели: %r", meta.get("n_feedback"))
+        n_feedback = 0
+    return n_feedback >= int(CONFIG.ml.ml_hard_filter_min_feedback)
+
+
 # Если модель уже есть на старте — считаем её «свежей», чтобы не запускать
 # тяжёлое переобучение на первом же тике рынка.
 last_model_retrain: Optional[datetime] = datetime.now() if ml_pipeline.model_exists else None
@@ -379,7 +404,7 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
                 scanner.get_candles(sym, base_tf) or [],
                 timeframe_minutes=_tf_minutes(base_tf),
             )
-            if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+            if _ml_hard_filter_active() and ml_score < ml_score_threshold:
                 continue
 
             await broadcast_message({
@@ -439,7 +464,7 @@ async def on_market_update_causal_scan(symbol: str, timeframe: str):
     ml_score = _score_and_record(
         features, candles, timeframe_minutes=_tf_minutes(timeframe)
     )
-    if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+    if _ml_hard_filter_active() and ml_score < ml_score_threshold:
         return
 
     await broadcast_message({
@@ -501,7 +526,7 @@ async def run_initial_causal_scan():
             ml_score = _score_and_record(
                 features, candles, timeframe_minutes=_tf_minutes(timeframe)
             )
-            if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+            if _ml_hard_filter_active() and ml_score < ml_score_threshold:
                 continue
             match_count += 1
 
@@ -1184,7 +1209,7 @@ async def run_initial_type_scan():
                 scanner.get_candles(sym, base_tf) or [],
                 timeframe_minutes=_tf_minutes(base_tf),
             )
-            if ml_pipeline.model_exists and ml_score < ml_score_threshold:
+            if _ml_hard_filter_active() and ml_score < ml_score_threshold:
                 continue
 
             match_count += 1
@@ -1882,6 +1907,8 @@ async def ml_status():
     """Состояние ML-модели: наличие, дата обучения, объём, точность, признаки."""
     status = ml_pipeline.status()
     status["ml_score_threshold"] = ml_score_threshold
+    status["ml_hard_filter_active"] = _ml_hard_filter_active()
+    status["ml_hard_filter_min_feedback"] = int(CONFIG.ml.ml_hard_filter_min_feedback)
     status["retrain_in_progress"] = _retrain_in_progress
     status["last_model_retrain"] = (
         last_model_retrain.isoformat() if last_model_retrain else None

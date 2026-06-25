@@ -53,6 +53,7 @@ class RelevanceClassifier:
         self.metadata: Dict[str, Any] = {
             "trained_at": None,
             "n_samples": 0,
+            "n_feedback": 0,
             "accuracy": None,
         }
         self._fitted = False

@@ -121,12 +121,18 @@ class ModelTrainer:
         n_samples = len(X)
         n_positive = sum(1 for v in y if v == 1)
         n_negative = n_samples - n_positive
+        # Число записей реальной обратной связи, попавших в обучение (с
+        # восстановимыми признаками). По нему включается жёсткий ML-фильтр.
+        n_feedback = sum(
+            1 for rec in (feedback_records or []) if rec.get("features")
+        )
         min_samples = int(CONFIG.ml.ml_min_training_samples)
 
         result: Dict[str, Any] = {
             "n_samples": n_samples,
             "n_positive": n_positive,
             "n_negative": n_negative,
+            "n_feedback": n_feedback,
             "trained": False,
         }
 
@@ -156,6 +162,7 @@ class ModelTrainer:
         # Переобучаем на всех данных перед сохранением (больше сигнала).
         clf.fit(X, y, sample_weight=weights)
         clf.metadata["accuracy"] = accuracy
+        clf.metadata["n_feedback"] = n_feedback
 
         if save:
             clf.save(self.model_path)
