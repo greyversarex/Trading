@@ -55,10 +55,22 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     match_id INTEGER,
                     is_relevant INTEGER,
+                    symbol TEXT,
+                    timeframe TEXT,
+                    structure_type TEXT,
+                    features TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (match_id) REFERENCES matches(id)
                 )
             """)
+
+            # Миграция: добавляем недостающие колонки в старые базы, где таблица
+            # feedback была создана без полей для самодостаточного обучения.
+            async with db.execute("PRAGMA table_info(feedback)") as cur:
+                existing_cols = {row[1] for row in await cur.fetchall()}
+            for col in ("symbol", "timeframe", "structure_type", "features"):
+                if col not in existing_cols:
+                    await db.execute(f"ALTER TABLE feedback ADD COLUMN {col} TEXT")
             
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS scan_sessions (
@@ -153,13 +165,34 @@ class Database:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
     
-    async def save_feedback(self, match_id: int, is_relevant: bool):
-        """Save user feedback for a match."""
+    async def save_feedback(
+        self,
+        is_relevant: bool,
+        match_id: Optional[int] = None,
+        symbol: Optional[str] = None,
+        timeframe: Optional[str] = None,
+        structure_type: Optional[str] = None,
+        features: Optional[Dict[str, float]] = None,
+    ):
+        """Сохраняет оценку пользователя.
+
+        ``features`` (словарь ML-признаков матча) делает запись самодостаточной
+        для дообучения модели — даже если матч не сохранён в таблице ``matches``
+        (например, скан по типу, где ``match_id`` отсутствует).
+        """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
-                INSERT INTO feedback (match_id, is_relevant)
-                VALUES (?, ?)
-            """, (match_id, 1 if is_relevant else 0))
+                INSERT INTO feedback
+                (match_id, is_relevant, symbol, timeframe, structure_type, features)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                match_id,
+                1 if is_relevant else 0,
+                symbol,
+                timeframe,
+                structure_type,
+                json.dumps(features) if features else None,
+            ))
             await db.commit()
     
     async def get_all_feedback(self) -> List[Dict[str, Any]]:
@@ -175,14 +208,25 @@ class Database:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT f.id, f.match_id, f.is_relevant, f.created_at,
-                       m.symbol, m.timeframe, m.structure_type, m.similarity_score
+                       f.features AS fb_features,
+                       COALESCE(f.symbol, m.symbol) AS symbol,
+                       COALESCE(f.timeframe, m.timeframe) AS timeframe,
+                       COALESCE(f.structure_type, m.structure_type) AS structure_type,
+                       m.similarity_score
                 FROM feedback f
                 LEFT JOIN matches m ON f.match_id = m.id
                 ORDER BY f.created_at ASC
             """) as cursor:
                 rows = await cursor.fetchall()
-                return [
-                    {
+                result: List[Dict[str, Any]] = []
+                for r in rows:
+                    features = None
+                    if r["fb_features"]:
+                        try:
+                            features = json.loads(r["fb_features"])
+                        except (json.JSONDecodeError, TypeError):
+                            features = None
+                    rec = {
                         "id": r["id"],
                         "match_id": r["match_id"],
                         "is_relevant": bool(r["is_relevant"]),
@@ -191,8 +235,10 @@ class Database:
                         "structure_type": r["structure_type"],
                         "similarity_score": r["similarity_score"],
                     }
-                    for r in rows
-                ]
+                    if features:
+                        rec["features"] = features
+                    result.append(rec)
+                return result
 
     async def get_feedback_stats(self, structure_id: int) -> Dict[str, int]:
         """Get feedback statistics for a structure's matches."""

@@ -24,6 +24,7 @@ from .config import CONFIG
 from . import settings_store
 from .ml.pipeline import MLPipeline
 from .ml.trainer import ModelTrainer
+from .ml.features import extract_ml_features
 from .synthetic import SyntheticChartGenerator
 
 
@@ -208,8 +209,11 @@ class ThresholdUpdate(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    match_id: int
     is_relevant: bool
+    match_id: Optional[int] = None
+    symbol: Optional[str] = None
+    timeframe: Optional[str] = None
+    structure_type: Optional[str] = None
 
 
 class PresetRequest(BaseModel):
@@ -1870,11 +1874,50 @@ async def get_matches(structure_id: int, limit: int = 100):
     return {"matches": matches}
 
 
+def _features_for_match(symbol: Optional[str], timeframe: Optional[str]):
+    """Находит текущую структуру для symbol+timeframe в сканере и считает её
+    ML-признаки. Нужно, чтобы оценка пользователя попала в дообучение модели.
+
+    Возвращает ``dict`` признаков либо ``None``, если структура не найдена.
+    """
+    if not symbol or not timeframe:
+        return None
+    base_tf = timeframe.split("_w")[0] if "_w" in timeframe else timeframe
+    for sym, tf, features, _ts, _ct in scanner.get_all_structures():
+        cand_base = tf.split("_w")[0] if "_w" in tf else tf
+        if sym == symbol and cand_base == base_tf and features is not None:
+            try:
+                return extract_ml_features(
+                    features,
+                    candidate_index=features.candidate_index,
+                    confirmation_index=features.confirmation_index,
+                    candle_history=scanner.get_candles(sym, base_tf) or [],
+                    timeframe_minutes=_tf_minutes(base_tf),
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("Не удалось извлечь ML-признаки для %s %s", sym, base_tf)
+                return None
+    return None
+
+
 @app.post("/api/feedback")
 async def submit_feedback(data: FeedbackRequest):
-    """Submit feedback for a match."""
-    await database.save_feedback(data.match_id, data.is_relevant)
-    return {"success": True}
+    """Сохраняет оценку пользователя («Релевантно»/«Нерелевантно»).
+
+    Вместе с оценкой сохраняются ML-признаки структуры (если её удалось найти
+    в сканере), чтобы накопленная обратная связь реально дообучала модель и
+    включала жёсткий ML-фильтр после ``ml_hard_filter_min_feedback`` оценок.
+    """
+    features = _features_for_match(data.symbol, data.timeframe)
+    await database.save_feedback(
+        is_relevant=data.is_relevant,
+        match_id=data.match_id,
+        symbol=data.symbol,
+        timeframe=data.timeframe,
+        structure_type=data.structure_type,
+        features=features,
+    )
+    return {"success": True, "features_captured": features is not None}
 
 
 @app.post("/api/retrain-ml")
