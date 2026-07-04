@@ -387,7 +387,12 @@ async def on_market_update_type_scan(symbol: str, timeframe: str):
     for sym, tf, features, timestamp, candle_time in relevant:
         if features is None:
             continue
-        
+
+        # Пропускаем устаревшие/неактивные структуры (например, тренд, против
+        # которого цена уже развернулась) — как и в similarity-режиме.
+        if hasattr(features, 'is_pattern_active') and not features.is_pattern_active:
+            continue
+
         detected = getattr(features, 'detected_patterns', {}) or {}
         primary_match = features.structure_type.value == search_type_filter
         secondary_match = search_type_filter in detected

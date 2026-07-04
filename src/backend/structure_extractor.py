@@ -2247,11 +2247,44 @@ class StructureExtractor:
         base.pattern_freshness = 1.0 if base.is_confirmed else (0.0 if base.is_invalidated else 0.5)
         return base
 
-    def _detect_trend(self, pivots: List[PivotPoint], line: np.ndarray, trend_slope: float) -> Tuple[bool, str, float]:
+    def _trend_still_active(self, line: np.ndarray, direction: str, price_range: float) -> bool:
+        """Проверяет, не развернулась ли цена против направления тренда.
+
+        Тренд считается устаревшим (неактивным), если в хвосте окна цена ушла
+        против направления тренда: для восходящего — заметное падение с максимума
+        или отрицательный ход хвоста, для нисходящего — симметрично.
+        """
+        n = len(line)
+        if n < 6 or price_range == 0:
+            return True
+
+        tail_len = max(5, n // 5)
+        tail_move = (line[-1] - line[-tail_len]) / price_range
+        reversal_threshold = 0.35
+        drawdown_threshold = 0.45
+
+        if direction == "up":
+            if tail_move < -reversal_threshold:
+                return False
+            idx_ext = int(np.argmax(line))
+            drawdown = (np.max(line) - line[-1]) / price_range
+            if idx_ext < n - tail_len and drawdown > drawdown_threshold:
+                return False
+        else:
+            if tail_move > reversal_threshold:
+                return False
+            idx_ext = int(np.argmin(line))
+            runup = (line[-1] - np.min(line)) / price_range
+            if idx_ext < n - tail_len and runup > drawdown_threshold:
+                return False
+
+        return True
+
+    def _detect_trend(self, pivots: List[PivotPoint], line: np.ndarray, trend_slope: float) -> Tuple[bool, str, float, bool]:
         n = len(line)
         price_range = np.max(line) - np.min(line)
         if price_range == 0:
-            return False, "", 0.0
+            return False, "", 0.0, True
 
         overall_move = (line[-1] - line[0]) / price_range
 
@@ -2262,8 +2295,8 @@ class StructureExtractor:
             if abs(overall_move) > 0.4 and abs(trend_slope) > 0.3:
                 direction = "up" if trend_slope > 0 else "down"
                 conf = min(1.0, abs(overall_move) * 0.5 + abs(trend_slope) * 0.5)
-                return True, direction, conf
-            return False, "", 0.0
+                return True, direction, conf, self._trend_still_active(line, direction, price_range)
+            return False, "", 0.0, True
 
         hh_count = sum(1 for i in range(1, len(highs)) if highs[i].value > highs[i-1].value)
         hl_count = sum(1 for i in range(1, len(lows)) if lows[i].value > lows[i-1].value)
@@ -2284,21 +2317,21 @@ class StructureExtractor:
             move_score = min(1.0, abs(overall_move))
             conf = move_score * 0.35 + pivot_score * 0.35 + r_sq * 0.3
             if conf > 0.35:
-                return True, "up", min(1.0, conf)
+                return True, "up", min(1.0, conf), self._trend_still_active(line, "up", price_range)
 
         if overall_move < -CONFIG.pattern.trend_move_threshold and (lh_ratio >= CONFIG.pattern.swing_ratio_threshold or ll_ratio >= CONFIG.pattern.swing_ratio_threshold):
             pivot_score = (lh_ratio + ll_ratio) / 2
             move_score = min(1.0, abs(overall_move))
             conf = move_score * 0.35 + pivot_score * 0.35 + r_sq * 0.3
             if conf > 0.35:
-                return True, "down", min(1.0, conf)
+                return True, "down", min(1.0, conf), self._trend_still_active(line, "down", price_range)
 
         if abs(overall_move) > 0.55 and r_sq > 0.5:
             direction = "up" if overall_move > 0 else "down"
             conf = min(1.0, abs(overall_move) * 0.5 + r_sq * 0.5)
-            return True, direction, conf
+            return True, direction, conf, self._trend_still_active(line, direction, price_range)
 
-        return False, "", 0.0
+        return False, "", 0.0, True
     
     def calculate_pivot_slopes(self, pivots: List[PivotPoint], line: np.ndarray) -> List[float]:
         if len(pivots) < 2:
@@ -2492,7 +2525,7 @@ class StructureExtractor:
 
         overall_move = abs(line[-1] - line[0]) / price_range
 
-        trend_detected, trend_dir, trend_conf = self._detect_trend(pivots, line, trend)
+        trend_detected, trend_dir, trend_conf, trend_active = self._detect_trend(pivots, line, trend)
         is_impulse, impulse_dir, impulse_conf = self._detect_impulse(line)
 
         candidates = []
@@ -2506,7 +2539,7 @@ class StructureExtractor:
         if trend_detected and trend_conf > 0.35:
             st = StructureType.TREND_UP if trend_dir == "up" else StructureType.TREND_DOWN
             candidates.append((st, trend_conf))
-            active_map[st] = True
+            active_map[st] = trend_active
 
         n = len(line)
         if n > 15:
@@ -2598,8 +2631,11 @@ class StructureExtractor:
         active_candidates = [(st, conf) for st, conf in candidates if active_map.get(st, True)]
         stale_candidates = [(st, conf) for st, conf in candidates if not active_map.get(st, True)]
 
+        # detected_patterns формируем только из АКТИВНЫХ кандидатов: устаревший
+        # (например, развернувшийся) паттерн не должен попадать во вторичные
+        # совпадения type-scan через detected_patterns.
         all_patterns: Dict[str, float] = {}
-        for st, conf in candidates:
+        for st, conf in active_candidates:
             key = st.value
             if key not in all_patterns or conf > all_patterns[key]:
                 all_patterns[key] = round(float(conf), 3)
