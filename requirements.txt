@@ -23,3 +23,16 @@ scipy
 uvicorn
 websockets
 pytest
+aiohttp
+aiosqlite
+fastapi
+numpy
+opencv-python-headless
+pillow
+pytest
+python-multipart
+python-binance
+scikit-learn
+scipy
+uvicorn
+websockets
