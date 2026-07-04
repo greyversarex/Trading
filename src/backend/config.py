@@ -24,6 +24,9 @@ class DataConfig:
     default_limit: int = 100
     window_sizes: List[int] = field(default_factory=lambda: [30, 50, 70])
     num_symbols: int = 50
+    # Минимальный суточный объём торгов (в USD). Монеты с объёмом ниже этого
+    # порога исключаются из сканирования и не попадают в результаты поиска.
+    min_quote_volume_24h: float = 100_000_000.0
     poll_interval_sec: float = 60.0
     error_sleep_sec: float = 10.0
     batch_sleep_sec: float = 0.15

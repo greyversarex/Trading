@@ -69,6 +69,9 @@ class BinanceScanner:
         self._poll_task: Optional[asyncio.Task] = None
         self._base_prices: Dict[str, float] = {}
         self.price_change_24h: Dict[str, float] = {}
+        # Суточный объём торгов в USD по символам (для фильтра ликвидности).
+        self.quote_volume_24h: Dict[str, float] = {}
+        self.min_quote_volume_24h: float = CONFIG.data.min_quote_volume_24h
         self._use_real_data: bool = True
         self._api_failures: int = 0
         self.initialized: bool = False
@@ -117,6 +120,12 @@ class BinanceScanner:
                                 base = sym.replace('USDT', '')
                                 pct = float(item.get('priceChangePercent', 0))
                                 changes[base] = round(pct, 2)
+                                try:
+                                    self.quote_volume_24h[base] = float(
+                                        item.get('quoteVolume', 0)
+                                    )
+                                except (TypeError, ValueError):
+                                    pass
                         return changes
         except Exception as e:
             logger.warning(f"Binance 24h ticker error: {e}")
@@ -167,10 +176,18 @@ class BinanceScanner:
                             sym = item['symbol'].upper()
                             change = item.get('price_change_percentage_24h', 0)
                             self.price_change_24h[sym] = round(change, 2) if change else 0
+                            volume = item.get('total_volume', 0) or 0
+                            self.quote_volume_24h[sym] = float(volume)
+                            # Отсекаем неликвидные монеты (объём < порога).
+                            if volume < self.min_quote_volume_24h:
+                                continue
                             if self._is_valid_binance_symbol(sym) and len(symbols) < self.num_symbols:
                                 symbols.append(sym)
                         self.data_available = True
-                        logger.info(f"Got {len(symbols)} valid Binance symbols from CoinGecko")
+                        logger.info(
+                            f"Got {len(symbols)} valid Binance symbols from CoinGecko "
+                            f"(volume >= ${self.min_quote_volume_24h:,.0f})"
+                        )
                         return symbols
         except Exception as e:
             logger.warning(f"CoinGecko API error: {e}, trying Binance tickers")
@@ -179,11 +196,40 @@ class BinanceScanner:
             changes = await self._fetch_binance_24h_tickers()
             if changes:
                 self.price_change_24h = changes
+                # Строим список из ликвидных пар Binance (объём >= порога),
+                # чтобы фильтр действовал и при недоступности CoinGecko.
+                symbols = self._liquid_symbols_from_volume()
+                if symbols:
+                    self.data_available = True
+                    logger.info(
+                        f"Got {len(symbols)} valid Binance symbols from tickers "
+                        f"(volume >= ${self.min_quote_volume_24h:,.0f})"
+                    )
+                    return symbols
         except Exception as e:
             logger.debug(f"Binance 24h tickers fetch failed: {e}")
         
         self.data_available = True
+        logger.warning(
+            "Оба источника недоступны: используются дефолтные символы "
+            "(degraded-режим, ликвидностный фильтр не применяется)."
+        )
         return self._get_default_symbols()
+
+    def _liquid_symbols_from_volume(self) -> List[str]:
+        """Ликвидные пары из собранных объёмов ``quote_volume_24h``.
+
+        Возвращает валидные для Binance символы с суточным объёмом не ниже
+        ``min_quote_volume_24h``, отсортированные по объёму (самые торгуемые
+        первыми), не более ``num_symbols`` штук.
+        """
+        liquid = [
+            (sym, vol)
+            for sym, vol in self.quote_volume_24h.items()
+            if vol >= self.min_quote_volume_24h and self._is_valid_binance_symbol(sym)
+        ]
+        liquid.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, _ in liquid[: self.num_symbols]]
     
     async def _fetch_binance_klines(self, symbol: str, interval: str, limit: int = 100) -> List[CandleData]:
         """Fetch real kline data from Binance public API."""

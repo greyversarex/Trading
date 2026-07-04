@@ -210,3 +210,34 @@ def test_ws_feed_started_when_enabled(monkeypatch):
         await scanner.stop()
 
     asyncio.run(scenario())
+
+
+def test_liquid_symbols_filters_low_volume():
+    """Фильтр ликвидности отсекает монеты с объёмом ниже порога и сортирует по объёму."""
+    scanner = BinanceScanner(num_symbols=5)
+    scanner.min_quote_volume_24h = 100_000_000.0
+    scanner.quote_volume_24h = {
+        "BTC": 5_000_000_000.0,   # выше порога
+        "ETH": 2_000_000_000.0,   # выше порога
+        "LOWCAP": 50_000_000.0,   # ниже порога -> отсекается
+        "TINY": 1_000_000.0,      # ниже порога -> отсекается
+        "USDT": 9_999_999_999.0,  # стейблкоин -> невалиден
+    }
+    result = scanner._liquid_symbols_from_volume()
+    assert result == ["BTC", "ETH"]
+    assert "LOWCAP" not in result
+    assert "TINY" not in result
+    assert "USDT" not in result
+
+
+def test_liquid_symbols_respects_num_symbols_cap():
+    """Возвращается не больше num_symbols самых объёмных пар."""
+    scanner = BinanceScanner(num_symbols=2)
+    scanner.min_quote_volume_24h = 100_000_000.0
+    scanner.quote_volume_24h = {
+        "A": 300_000_000.0,
+        "B": 500_000_000.0,
+        "C": 400_000_000.0,
+    }
+    result = scanner._liquid_symbols_from_volume()
+    assert result == ["B", "C"]
