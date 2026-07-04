@@ -179,8 +179,8 @@ class BinanceScanner:
             changes = await self._fetch_binance_24h_tickers()
             if changes:
                 self.price_change_24h = changes
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Binance 24h tickers fetch failed: {e}")
         
         self.data_available = True
         return self._get_default_symbols()

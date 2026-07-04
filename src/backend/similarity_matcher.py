@@ -203,7 +203,7 @@ class SimilarityMatcher:
             corr, _ = pearsonr(line1, line2)
             if not np.isnan(corr):
                 correlation = (corr + 1) / 2
-        except:
+        except Exception:
             pass
 
         mse = np.mean((line1 - line2) ** 2)
@@ -214,7 +214,7 @@ class SimilarityMatcher:
             cosine_sim = 1.0 - cosine(line1, line2) if np.any(line1) and np.any(line2) else 0.0
             if np.isnan(cosine_sim):
                 cosine_sim = 0.0
-        except:
+        except Exception:
             pass
 
         down1 = line1[::4] if len(line1) >= 20 else line1[::2]
@@ -233,7 +233,7 @@ class SimilarityMatcher:
                     sc, _ = pearsonr(s1, s2)
                     if not np.isnan(sc):
                         segment_corrs.append((sc + 1) / 2)
-                except:
+                except Exception:
                     pass
         segment_sim = np.mean(segment_corrs) if segment_corrs else correlation
 

@@ -229,7 +229,7 @@ class StructureExtractor:
         
         try:
             smoothed = savgol_filter(line, window1, poly_order1)
-        except:
+        except Exception:
             smoothed = line.copy()
         
         diffs = np.abs(np.diff(smoothed))
@@ -256,7 +256,7 @@ class StructureExtractor:
             
             try:
                 smoothed = savgol_filter(smoothed, window2, poly_order2)
-            except:
+            except Exception:
                 pass
         
         return smoothed

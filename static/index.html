@@ -37,6 +37,34 @@
         .gallery-item.active {
             ring: 2px solid #3b82f6;
         }
+        #toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-width: 360px;
+        }
+        .toast {
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            color: #fff;
+            font-size: 0.875rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            opacity: 0;
+            transform: translateX(120%);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            border-left: 4px solid rgba(255, 255, 255, 0.6);
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .toast-error { background-color: #7f1d1d; border-left-color: #ef4444; }
+        .toast-info { background-color: #1e3a8a; border-left-color: #3b82f6; }
+        .toast-success { background-color: #14532d; border-left-color: #22c55e; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen">
@@ -755,6 +783,24 @@
     </div>
 
     <script>
+        function showToast(message, type = 'error', duration = 4000) {
+            let container = document.getElementById('toast-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toast-container';
+                document.body.appendChild(container);
+            }
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-' + type;
+            toast.textContent = message;
+            container.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
         let ws = null;
         let matches = [];
         let referenceChart = null;
@@ -1745,7 +1791,7 @@
                 loadGallery();
                 
             } catch (error) {
-                alert('Ошибка загрузки графика: ' + error.message);
+                showToast('Ошибка загрузки графика: ' + error.message, 'error');
             }
         }
 
@@ -2050,7 +2096,7 @@
                 
             } catch (error) {
                 console.error('Ошибка candle scan:', error);
-                alert('Ошибка: ' + error.message);
+                showToast('Ошибка: ' + error.message, 'error');
             }
         }
 
@@ -2144,7 +2190,7 @@
                 updateStatus(true);
             } catch (error) {
                 console.error('Ошибка fibo scan:', error);
-                alert('Ошибка: ' + error.message);
+                showToast('Ошибка: ' + error.message, 'error');
             }
         }
 
@@ -2182,7 +2228,7 @@
                 updateStatus(true);
             } catch (error) {
                 console.error('Ошибка level scan:', error);
-                alert('Ошибка: ' + error.message);
+                showToast('Ошибка: ' + error.message, 'error');
             }
         }
 
@@ -2225,7 +2271,7 @@
                     document.getElementById('numSymbols').textContent = data.num_symbols || 50;
                 }
             } catch (error) {
-                alert('Ошибка запуска сканирования: ' + error.message);
+                showToast('Ошибка запуска сканирования: ' + error.message, 'error');
             } finally {
                 _scanLock = false;
                 document.querySelectorAll('.type-scan-btn').forEach(b => b.style.pointerEvents = '');
@@ -2238,14 +2284,14 @@
             } else if (currentStructure?.structure_id || currentStructure?.id) {
                 await startScanWithMode('uploaded', null, currentStructure.structure_id || currentStructure.id);
             } else {
-                alert('Выберите паттерн или загрузите скриншот');
+                showToast('Выберите паттерн или загрузите скриншот', 'info');
             }
         }
         
         async function startScanWithUploaded() {
             const structureId = currentStructure?.structure_id || currentStructure?.id;
             if (!structureId) {
-                alert('Сначала загрузите скриншот графика');
+                showToast('Сначала загрузите скриншот графика', 'info');
                 return;
             }
             
@@ -2267,7 +2313,7 @@
                     updateStatus(false);
                 }
             } catch (error) {
-                alert('Ошибка остановки сканирования: ' + error.message);
+                showToast('Ошибка остановки сканирования: ' + error.message, 'error');
             }
         }
 
@@ -2521,13 +2567,13 @@
                 
                 await startScanWithMode('manual', null, data.structure_id);
             } catch (error) {
-                alert('Ошибка: ' + error.message);
+                showToast('Ошибка: ' + error.message, 'error');
             }
         }
         
         async function saveManualStructure() {
             if (manualPivots.length < 3) {
-                alert('Добавьте минимум 3 точки');
+                showToast('Добавьте минимум 3 точки', 'info');
                 return;
             }
             
@@ -2566,7 +2612,7 @@
                 await startScanWithMode('manual', null, data.structure_id);
                 
             } catch (error) {
-                alert('Ошибка сохранения структуры: ' + error.message);
+                showToast('Ошибка сохранения структуры: ' + error.message, 'error');
             }
         }
 
@@ -2641,7 +2687,7 @@
 
         async function openDebugChart(symbol, timeframe, isCandlePattern, patternType) {
             if (typeof LightweightCharts === 'undefined') {
-                alert('Библиотека графиков не загружена. Попробуйте обновить страницу.');
+                showToast('Библиотека графиков не загружена. Попробуйте обновить страницу.', 'error');
                 return;
             }
 

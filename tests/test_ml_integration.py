@@ -84,16 +84,44 @@ def test_low_confidence_filtered_with_model(tmp_path):
 @pytest.mark.skipif(not sklearn_available(), reason="нет scikit-learn")
 def test_retrain_endpoint_returns_metrics():
     """POST /api/retrain-ml (функция) возвращает success и метрики."""
+    import json as _json
+
+    from src.backend.synthetic import SyntheticChartGenerator
+
     # БД нужна для загрузки обратной связи
     asyncio.run(app_main.database.initialize())
-    app_main._retrain_in_progress = False
-    result = asyncio.run(app_main.retrain_ml())
-    assert isinstance(result, dict)
-    assert result.get("success") is True
-    assert result.get("trained") is True
-    assert result.get("accuracy", 0) > 0.7
-    # после переобучения модель загружена в пайплайн
-    assert app_main.ml_pipeline.model_exists
+
+    # Эндпоинт читает синтетический датасет из фиксированного пути. Делаем тест
+    # самодостаточным: генерируем детерминированный датасет, а существующий файл
+    # сохраняем и восстанавливаем, чтобы не затирать пользовательские данные.
+    path = app_main.SYNTHETIC_DATASET_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    backup = None
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            backup = f.read()
+
+    gen = SyntheticChartGenerator()
+    dataset = gen.generate_labeled_dataset(n_per_class=50, n_noise=120, seed=11)
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(dataset, f)
+
+        app_main._retrain_in_progress = False
+        result = asyncio.run(app_main.retrain_ml())
+        assert isinstance(result, dict)
+        assert result.get("success") is True
+        assert result.get("trained") is True
+        assert result.get("accuracy", 0) > 0.7
+        # после переобучения модель загружена в пайплайн
+        assert app_main.ml_pipeline.model_exists
+    finally:
+        if backup is not None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(backup)
+        elif os.path.exists(path):
+            os.remove(path)
 
 
 @pytest.mark.skipif(not sklearn_available(), reason="нет scikit-learn")

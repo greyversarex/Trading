@@ -1,11 +1,12 @@
 import asyncio
 import logging
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import numpy as np
@@ -30,12 +31,46 @@ from .synthetic import SyntheticChartGenerator
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Chart Structure Scanner")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- startup ---
+    await database.initialize()
+    # Загружаем сохранённые пользовательские настройки (Phase 3.2) и
+    # синхронизируем зависящий от них глобальный порог ML.
+    global ml_score_threshold
+    settings_store.load_settings()
+    ml_score_threshold = CONFIG.ml.ml_score_threshold
+    yield
+    # --- shutdown ---
+    if is_scanning:
+        await stop_scan()
+
+
+app = FastAPI(title="Chart Structure Scanner", lifespan=lifespan)
+
+# CORS: wildcard-происхождение ("*") несовместимо с allow_credentials=True в
+# браузерах и небезопасно. По умолчанию — открытый доступ без credentials.
+# Для продакшена задайте переменную окружения ALLOWED_ORIGINS (список доменов
+# через запятую) — тогда включается режим с credentials.
+_allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _allowed_origins_env:
+    _cors_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
+    # Wildcard "*" несовместим с credentials в браузерах — если оператор задал
+    # его явно, отключаем credentials, чтобы не воссоздать исходный дефект.
+    _cors_allow_credentials = "*" not in _cors_origins
+    if not _cors_allow_credentials:
+        logger.warning(
+            "ALLOWED_ORIGINS содержит '*': credentials отключены (несовместимо с браузерами)."
+        )
+else:
+    _cors_origins = ["*"]
+    _cors_allow_credentials = False
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -244,29 +279,13 @@ class ManualStructureRequest(BaseModel):
     pivots: List[ManualPivot]
 
 
-@app.on_event("startup")
-async def startup():
-    await database.initialize()
-    # Загружаем сохранённые пользовательские настройки (Phase 3.2) и
-    # синхронизируем зависящий от них глобальный порог ML.
-    global ml_score_threshold
-    settings_store.load_settings()
-    ml_score_threshold = CONFIG.ml.ml_score_threshold
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    if is_scanning:
-        await stop_scan()
-
-
 async def broadcast_message(message: dict):
     """Send message to all connected WebSocket clients."""
     disconnected = []
     for ws in active_websockets:
         try:
             await ws.send_json(message)
-        except:
+        except Exception:
             disconnected.append(ws)
     
     for ws in disconnected:
@@ -1926,9 +1945,8 @@ async def retrain_ml():
     global _retrain_in_progress
 
     if _retrain_in_progress:
-        return JSONResponse(
-            status_code=409,
-            content={"success": False, "reason": "Переобучение уже выполняется."},
+        raise HTTPException(
+            status_code=409, detail="Переобучение уже выполняется."
         )
 
     _retrain_in_progress = True
@@ -1938,9 +1956,9 @@ async def retrain_ml():
         _retrain_in_progress = False
 
     if not result.get("trained"):
-        return JSONResponse(
+        raise HTTPException(
             status_code=400,
-            content={"success": False, **result},
+            detail=result.get("reason", "Не удалось обучить ML-модель."),
         )
     return {"success": True, **result}
 
