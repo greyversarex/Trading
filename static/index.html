@@ -2666,8 +2666,9 @@
 
         function openTvFromModal() {
             if (!currentModalMatch) return;
+            const { symbol, timeframe } = currentModalMatch;
             closeModal();
-            openTradingViewChart(currentModalMatch.symbol, currentModalMatch.timeframe);
+            openTradingViewChart(symbol, timeframe);
         }
 
         let debugLwChart = null;
