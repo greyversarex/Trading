@@ -157,23 +157,6 @@ class LevelConfig:
 
 
 @dataclass
-class FiboConfig:
-    """Параметры анализа уровней Фибоначчи."""
-
-    touch_tolerance: float = 0.003
-    min_swing_pct: float = 0.02
-
-
-@dataclass
-class CandleConfig:
-    """Параметры детекции свечных паттернов."""
-
-    max_age: int = 10
-    volume_floor: float = 0.6
-    lookback: int = 5
-
-
-@dataclass
 class SimilarityConfig:
     """Веса и пороги сопоставления структур."""
 
@@ -233,8 +216,6 @@ class AppConfig:
     structure: StructureConfig = field(default_factory=StructureConfig)
     pattern: PatternConfig = field(default_factory=PatternConfig)
     level: LevelConfig = field(default_factory=LevelConfig)
-    fibo: FiboConfig = field(default_factory=FiboConfig)
-    candle: CandleConfig = field(default_factory=CandleConfig)
     similarity: SimilarityConfig = field(default_factory=SimilarityConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     ml: MLConfig = field(default_factory=MLConfig)
