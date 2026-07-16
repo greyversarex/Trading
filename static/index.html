@@ -105,8 +105,6 @@
                             <select id="patternModeSelect" onchange="switchPatternMode(this.value)" 
                                     class="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500">
                                 <option value="structure">Структуры</option>
-                                <option value="candle">Свечные</option>
-                                <option value="fibonacci">Фибоначчи</option>
                                 <option value="levels">Уровни</option>
                             </select>
                         </div>
@@ -198,46 +196,6 @@
                         </div>
                     </div>
 
-                    <div id="fiboPatterns" class="hidden">
-                        <p class="text-xs text-gray-400 mb-3">Находит графики с касаниями уровней Фибоначчи</p>
-                        <div class="grid grid-cols-1 gap-2 mb-3">
-                            <button onclick="startFiboScan()" class="fibo-scan-btn bg-gradient-to-r from-amber-700 to-yellow-600 hover:from-amber-600 hover:to-yellow-500 p-4 rounded-lg text-sm text-left transition">
-                                <div class="font-medium text-base">Найти касания Фибо</div>
-                                <div class="text-xs text-amber-200 mt-1">Уровни 23.6%, 38.2%, 50%, 61.8%, 78.6%</div>
-                            </button>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="flex items-center justify-between">
-                                <label class="text-xs text-gray-400">Мин. касаний</label>
-                                <div class="flex items-center gap-2">
-                                    <input type="range" id="fiboMinTouches" min="1" max="8" value="3" 
-                                           class="w-20 h-1 bg-gray-600 rounded-lg cursor-pointer"
-                                           oninput="document.getElementById('fiboMinTouchesVal').textContent = this.value">
-                                    <span id="fiboMinTouchesVal" class="text-xs text-gray-300 w-4 text-right">3</span>
-                                </div>
-                            </div>
-                            <div class="flex items-center justify-between">
-                                <label class="text-xs text-gray-400">Мин. качество</label>
-                                <div class="flex items-center gap-2">
-                                    <input type="range" id="fiboMinQuality" min="10" max="80" value="30" step="5"
-                                           class="w-20 h-1 bg-gray-600 rounded-lg cursor-pointer"
-                                           oninput="document.getElementById('fiboMinQualityVal').textContent = this.value + '%'">
-                                    <span id="fiboMinQualityVal" class="text-xs text-gray-300 w-8 text-right">30%</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mt-3 p-3 bg-gray-700/50 rounded-lg">
-                            <div class="text-xs text-gray-300 font-medium mb-2">Уровни Фибоначчи:</div>
-                            <div class="grid grid-cols-2 gap-1 text-xs text-gray-400">
-                                <div><span class="text-yellow-400">23.6%</span> — слабая коррекция</div>
-                                <div><span class="text-orange-400">38.2%</span> — умеренная</div>
-                                <div><span class="text-red-400">50.0%</span> — половинный откат</div>
-                                <div><span class="text-pink-400">61.8%</span> — золотое сечение</div>
-                                <div><span class="text-purple-400">78.6%</span> — глубокая коррекция</div>
-                            </div>
-                        </div>
-                    </div>
-
                     <div id="levelPatterns" class="hidden">
                         <p class="text-xs text-gray-400 mb-3">Находит чёткие уровни поддержки и сопротивления (горизонтальные и наклонные)</p>
                         <div class="grid grid-cols-1 gap-2 mb-3">
@@ -267,87 +225,6 @@
                         </div>
                     </div>
 
-                    <div id="candlePatterns" class="hidden">
-                        <p class="text-xs text-gray-400 mb-3">Сканирует рынок по свечным паттернам на последних свечах</p>
-                        <div class="grid grid-cols-2 gap-2">
-                            <button onclick="startCandleScan('doji')" class="candle-scan-btn bg-gray-700 hover:bg-gray-500 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Доджи</div>
-                                <div class="text-xs text-gray-400">Неопределённость</div>
-                            </button>
-                            <button onclick="startCandleScan('hammer')" class="candle-scan-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Молот</div>
-                                <div class="text-xs text-gray-400">Разворот вверх</div>
-                            </button>
-                            <button onclick="startCandleScan('inverted_hammer')" class="candle-scan-btn bg-gray-700 hover:bg-green-700 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Перевёрн. молот</div>
-                                <div class="text-xs text-gray-400">Потенц. разворот вверх</div>
-                            </button>
-                            <button onclick="startCandleScan('shooting_star')" class="candle-scan-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Падающая звезда</div>
-                                <div class="text-xs text-gray-400">Разворот вниз</div>
-                            </button>
-                            <button onclick="startCandleScan('engulfing_bull')" class="candle-scan-btn bg-gray-700 hover:bg-emerald-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Бычье поглощение</div>
-                                <div class="text-xs text-gray-400">Сильный разворот вверх</div>
-                            </button>
-                            <button onclick="startCandleScan('engulfing_bear')" class="candle-scan-btn bg-gray-700 hover:bg-rose-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Медв. поглощение</div>
-                                <div class="text-xs text-gray-400">Сильный разворот вниз</div>
-                            </button>
-                            <button onclick="startCandleScan('morning_star')" class="candle-scan-btn bg-gray-700 hover:bg-green-500 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Утренняя звезда</div>
-                                <div class="text-xs text-gray-400">Разворот вверх (3 свечи)</div>
-                            </button>
-                            <button onclick="startCandleScan('evening_star')" class="candle-scan-btn bg-gray-700 hover:bg-red-500 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Вечерняя звезда</div>
-                                <div class="text-xs text-gray-400">Разворот вниз (3 свечи)</div>
-                            </button>
-                            <button onclick="startCandleScan('three_white_soldiers')" class="candle-scan-btn bg-gray-700 hover:bg-emerald-500 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">3 белых солдата</div>
-                                <div class="text-xs text-gray-400">Сильный бычий сигнал</div>
-                            </button>
-                            <button onclick="startCandleScan('three_black_crows')" class="candle-scan-btn bg-gray-700 hover:bg-rose-500 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">3 чёрных вороны</div>
-                                <div class="text-xs text-gray-400">Сильный медвежий</div>
-                            </button>
-                            <button onclick="startCandleScan('harami_bull')" class="candle-scan-btn bg-gray-700 hover:bg-teal-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Бычий харами</div>
-                                <div class="text-xs text-gray-400">Малая свеча в большой</div>
-                            </button>
-                            <button onclick="startCandleScan('harami_bear')" class="candle-scan-btn bg-gray-700 hover:bg-pink-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Медвежий харами</div>
-                                <div class="text-xs text-gray-400">Малая свеча в большой</div>
-                            </button>
-                            <button onclick="startCandleScan('piercing_line')" class="candle-scan-btn bg-gray-700 hover:bg-cyan-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Пронизывающая</div>
-                                <div class="text-xs text-gray-400">Бычий разворот</div>
-                            </button>
-                            <button onclick="startCandleScan('dark_cloud')" class="candle-scan-btn bg-gray-700 hover:bg-purple-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Тёмная завеса</div>
-                                <div class="text-xs text-gray-400">Медвежий разворот</div>
-                            </button>
-                            <button onclick="startCandleScan('spinning_top')" class="candle-scan-btn bg-gray-700 hover:bg-yellow-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Волчок</div>
-                                <div class="text-xs text-gray-400">Нерешительность</div>
-                            </button>
-                            <button onclick="startCandleScan('marubozu_bull')" class="candle-scan-btn bg-gray-700 hover:bg-green-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Марубозу ↑</div>
-                                <div class="text-xs text-gray-400">Полное тело, бычий</div>
-                            </button>
-                            <button onclick="startCandleScan('marubozu_bear')" class="candle-scan-btn bg-gray-700 hover:bg-red-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Марубозу ↓</div>
-                                <div class="text-xs text-gray-400">Полное тело, медвежий</div>
-                            </button>
-                            <button onclick="startCandleScan('tweezer_top')" class="candle-scan-btn bg-gray-700 hover:bg-orange-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Пинцет верх</div>
-                                <div class="text-xs text-gray-400">Два одинак. максимума</div>
-                            </button>
-                            <button onclick="startCandleScan('tweezer_bottom')" class="candle-scan-btn bg-gray-700 hover:bg-blue-600 p-3 rounded-lg text-sm text-left transition">
-                                <div class="font-medium">Пинцет низ</div>
-                                <div class="text-xs text-gray-400">Два одинак. минимума</div>
-                            </button>
-                        </div>
-                    </div>
                 </div>
 
                 <button onclick="openStructureModal()" 
@@ -662,23 +539,6 @@
                 </div>
             </div>
             
-            <div id="modalFiboInfo" class="hidden mb-4">
-                <div class="bg-gradient-to-r from-amber-900/30 to-yellow-900/20 border border-amber-700/30 rounded-lg p-4">
-                    <div class="text-sm font-medium text-amber-400 mb-2">Уровни Фибоначчи</div>
-                    <div class="grid grid-cols-2 gap-3 text-sm">
-                        <div>
-                            <span class="text-gray-400">Свинг:</span>
-                            <span id="modalFiboSwing" class="ml-1 text-gray-200"></span>
-                        </div>
-                        <div>
-                            <span class="text-gray-400">Направление:</span>
-                            <span id="modalFiboDir" class="ml-1 text-gray-200"></span>
-                        </div>
-                    </div>
-                    <div id="modalFiboTouches" class="mt-3 grid grid-cols-5 gap-2"></div>
-                </div>
-            </div>
-            
             <div class="mb-4">
                 <p class="text-sm text-gray-400 mb-2">График найденного паттерна:</p>
                 <div class="h-64 bg-gray-700 rounded overflow-hidden">
@@ -898,26 +758,6 @@
             'bear_flag': 'Медвежий флаг',
             'rising_wedge': 'Восходящий клин',
             'falling_wedge': 'Нисходящий клин',
-            'doji': 'Доджи',
-            'hammer': 'Молот',
-            'inverted_hammer': 'Перевёрн. молот',
-            'shooting_star': 'Падающая звезда',
-            'spinning_top': 'Волчок',
-            'marubozu_bull': 'Марубозу ↑',
-            'marubozu_bear': 'Марубозу ↓',
-            'engulfing_bull': 'Бычье поглощение',
-            'engulfing_bear': 'Медв. поглощение',
-            'morning_star': 'Утренняя звезда',
-            'evening_star': 'Вечерняя звезда',
-            'three_white_soldiers': '3 белых солдата',
-            'three_black_crows': '3 чёрных вороны',
-            'harami_bull': 'Бычий харами',
-            'harami_bear': 'Медвежий харами',
-            'piercing_line': 'Пронизывающая',
-            'dark_cloud': 'Тёмная завеса',
-            'tweezer_top': 'Пинцет верх',
-            'tweezer_bottom': 'Пинцет низ',
-            'fibonacci': 'Фибоначчи',
             'level_support': 'Поддержка',
             'level_resistance': 'Сопротивление',
             'unknown': 'Неизвестно'
@@ -1076,7 +916,6 @@
                             ${structureTypeLabels[match.structure_type] || match.structure_type}
                         </span>
                         ${mlScoreBadge(match.ml_score)}
-                        ${match.fibo_data ? `<div class="text-xs text-amber-400 mt-1">${match.fibo_data.total_touches} кас. / ${match.fibo_data.best_level}</div>` : ''}
                         ${match.level_data ? `<div class="text-xs text-cyan-400 mt-1">${match.level_data.touch_count} кас. / ${match.level_data.slope_label}</div>` : ''}
                     </td>
                     <td class="py-3 pr-4">
@@ -1095,7 +934,7 @@
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
                                 </svg>
                             </button>
-                            <button onclick="openDebugChart('${match.symbol}', '${match.timeframe}', ${match.is_candle_pattern ? 'true' : 'false'}, '${match.structure_type || ''}')" 
+                            <button onclick="openDebugChart('${match.symbol}', '${match.timeframe}', false, '${match.structure_type || ''}')" 
                                     class="p-1.5 hover:bg-purple-600/20 rounded text-purple-400 hover:text-purple-300 transition" title="Логика алгоритма: пивоты и структура">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
@@ -1404,25 +1243,6 @@
             ptEl.textContent = age.text;
             ptEl.className = `ml-2 font-medium ${age.color}`;
             
-            const fiboInfoEl = document.getElementById('modalFiboInfo');
-            if (match.fibo_data) {
-                fiboInfoEl.classList.remove('hidden');
-                const fd = match.fibo_data;
-                document.getElementById('modalFiboSwing').textContent = `${fd.swing_low.toFixed(4)} → ${fd.swing_high.toFixed(4)}`;
-                document.getElementById('modalFiboDir').textContent = fd.is_uptrend ? '↑ Восходящий' : '↓ Нисходящий';
-                const touchesEl = document.getElementById('modalFiboTouches');
-                const levelColors = {'23.6%': 'text-yellow-400', '38.2%': 'text-orange-400', '50%': 'text-red-400', '61.8%': 'text-pink-400', '78.6%': 'text-purple-400'};
-                touchesEl.innerHTML = Object.entries(fd.touch_summary || {}).map(([level, info]) => `
-                    <div class="bg-gray-700/60 rounded p-2 text-center">
-                        <div class="${levelColors[level] || 'text-gray-300'} font-medium text-xs">${level}</div>
-                        <div class="text-white text-sm font-bold">${info.count}</div>
-                        <div class="text-xs text-gray-400">${info.bounces ? info.bounces + ' отск.' : ''}</div>
-                    </div>
-                `).join('');
-            } else {
-                fiboInfoEl.classList.add('hidden');
-            }
-            
             const modal = document.getElementById('chartModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -1680,26 +1500,6 @@
                 'bear_flag': 'bg-pink-600',
                 'rising_wedge': 'bg-amber-600',
                 'falling_wedge': 'bg-sky-600',
-                'doji': 'bg-gray-500',
-                'hammer': 'bg-green-600',
-                'inverted_hammer': 'bg-green-700',
-                'shooting_star': 'bg-red-600',
-                'spinning_top': 'bg-yellow-600',
-                'marubozu_bull': 'bg-green-600',
-                'marubozu_bear': 'bg-red-600',
-                'engulfing_bull': 'bg-emerald-600',
-                'engulfing_bear': 'bg-rose-600',
-                'morning_star': 'bg-green-500',
-                'evening_star': 'bg-red-500',
-                'three_white_soldiers': 'bg-emerald-500',
-                'three_black_crows': 'bg-rose-500',
-                'harami_bull': 'bg-teal-600',
-                'harami_bear': 'bg-pink-600',
-                'piercing_line': 'bg-cyan-600',
-                'dark_cloud': 'bg-purple-600',
-                'tweezer_top': 'bg-orange-600',
-                'tweezer_bottom': 'bg-blue-600',
-                'fibonacci': 'bg-amber-600',
                 'level_support': 'bg-green-600',
                 'level_resistance': 'bg-red-600',
                 'unknown': 'bg-gray-600'
@@ -2020,95 +1820,16 @@
             'falling_wedge': 'Сужающийся канал вниз — бычий сигнал.'
         };
 
-        const candleDescriptions = {
-            'doji': 'Тело почти отсутствует. Покупатели и продавцы в равновесии.',
-            'hammer': 'Длинная нижняя тень, маленькое тело вверху. Сигнал разворота вверх.',
-            'inverted_hammer': 'Длинная верхняя тень, маленькое тело внизу. Потенциальный разворот вверх.',
-            'shooting_star': 'Длинная верхняя тень, маленькое медвежье тело. Разворот вниз.',
-            'spinning_top': 'Маленькое тело, примерно равные тени. Нерешительность рынка.',
-            'marubozu_bull': 'Длинное бычье тело без теней. Сильное давление покупателей.',
-            'marubozu_bear': 'Длинное медвежье тело без теней. Сильное давление продавцов.',
-            'engulfing_bull': 'Бычья свеча полностью поглощает предыдущую медвежью. Сильный разворот.',
-            'engulfing_bear': 'Медвежья свеча полностью поглощает предыдущую бычью. Сильный разворот.',
-            'morning_star': 'Три свечи: медвежья → маленькая → бычья. Разворот вверх после падения.',
-            'evening_star': 'Три свечи: бычья → маленькая → медвежья. Разворот вниз после роста.',
-            'three_white_soldiers': 'Три подряд бычьих свечи с растущими close. Сильный бычий сигнал.',
-            'three_black_crows': 'Три подряд медвежьих свечи с падающими close. Сильный медвежий сигнал.',
-            'harami_bull': 'Малая бычья свеча внутри большой медвежьей. Ослабление продавцов.',
-            'harami_bear': 'Малая медвежья свеча внутри большой бычьей. Ослабление покупателей.',
-            'piercing_line': 'Бычья свеча открывается ниже предыдущей, закрывается выше её середины.',
-            'dark_cloud': 'Медвежья свеча открывается выше предыдущей, закрывается ниже её середины.',
-            'tweezer_top': 'Два одинаковых максимума подряд (бычья → медвежья). Разворот вниз.',
-            'tweezer_bottom': 'Два одинаковых минимума подряд (медвежья → бычья). Разворот вверх.'
-        };
-
         function switchPatternMode(mode) {
             const structDiv = document.getElementById('structurePatterns');
-            const candleDiv = document.getElementById('candlePatterns');
-            const fiboDiv = document.getElementById('fiboPatterns');
             const levelDiv = document.getElementById('levelPatterns');
             structDiv.classList.add('hidden');
-            candleDiv.classList.add('hidden');
-            fiboDiv.classList.add('hidden');
             levelDiv.classList.add('hidden');
-            if (mode === 'candle') {
-                candleDiv.classList.remove('hidden');
-            } else if (mode === 'fibonacci') {
-                fiboDiv.classList.remove('hidden');
-            } else if (mode === 'levels') {
+            if (mode === 'levels') {
                 levelDiv.classList.remove('hidden');
             } else {
                 structDiv.classList.remove('hidden');
             }
-        }
-
-        async function startCandleScan(candleType) {
-            try {
-                matches = [];
-                matchIdCounter = 0;
-                renderMatches();
-                
-                highlightActiveCandleBtn(candleType);
-                
-                const typeName = structureTypeLabels[candleType] || candleType;
-                
-                document.getElementById('structureInfo').classList.add('hidden');
-                
-                const typeScanDiv = document.getElementById('typeScanInfo');
-                document.getElementById('typeScanName').textContent = typeName;
-                document.getElementById('typeScanDescription').textContent = candleDescriptions[candleType] || '';
-                typeScanDiv.classList.remove('hidden');
-                
-                const tfFilter = document.getElementById('timeframeSelect').value || null;
-                const response = await fetch('/api/start-scan', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode: 'candle_scan', candle_filter: candleType, timeframe_filter: tfFilter })
-                });
-                
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Ошибка');
-                }
-                
-                const data = await response.json();
-                updateStatus(true);
-                
-            } catch (error) {
-                console.error('Ошибка candle scan:', error);
-                showToast('Ошибка: ' + error.message, 'error');
-            }
-        }
-
-        function highlightActiveCandleBtn(candleType) {
-            document.querySelectorAll('.candle-scan-btn').forEach(btn => {
-                btn.classList.remove('ring-2', 'ring-white');
-            });
-            document.querySelectorAll('.candle-scan-btn').forEach(btn => {
-                if (btn.getAttribute('onclick')?.includes(`'${candleType}'`)) {
-                    btn.classList.add('ring-2', 'ring-white');
-                }
-            });
         }
 
         async function startTypeScan(structureType) {
@@ -2154,46 +1875,6 @@
             }
         }
         
-        async function startFiboScan() {
-            try {
-                matches = [];
-                matchIdCounter = 0;
-                renderMatches();
-
-                document.getElementById('structureInfo').classList.add('hidden');
-                const typeScanDiv = document.getElementById('typeScanInfo');
-                document.getElementById('typeScanName').textContent = 'Фибоначчи';
-                document.getElementById('typeScanDescription').textContent = 'Поиск графиков с касаниями уровней Фибоначчи (23.6%, 38.2%, 50%, 61.8%, 78.6%)';
-                typeScanDiv.classList.remove('hidden');
-
-                const tfFilter = document.getElementById('timeframeSelect').value || null;
-                const minTouches = parseInt(document.getElementById('fiboMinTouches').value) || 3;
-                const minQuality = parseFloat(document.getElementById('fiboMinQuality').value) || 30;
-
-                const response = await fetch('/api/start-scan', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        mode: 'fibo_scan',
-                        timeframe_filter: tfFilter,
-                        fibo_min_touches: minTouches,
-                        fibo_min_quality: minQuality
-                    })
-                });
-
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Ошибка');
-                }
-
-                await response.json();
-                updateStatus(true);
-            } catch (error) {
-                console.error('Ошибка fibo scan:', error);
-                showToast('Ошибка: ' + error.message, 'error');
-            }
-        }
-
         async function startLevelScan() {
             try {
                 matches = [];
@@ -2761,47 +2442,7 @@
 
                 const markers = [];
 
-                if (isCandlePattern && patternType) {
-                    const patResp = await fetch(`/api/candle-patterns/${symbol}/${timeframe}?pattern=${patternType}`);
-                    if (patResp.ok) {
-                        const patData = await patResp.json();
-                        const patternPositions = patData.patterns || [];
-                        const patLabel = structureTypeLabels[patternType] || patternType;
-
-                        for (const pos of patternPositions) {
-                            markers.push({
-                                time: pos.time,
-                                position: pos.is_bullish ? 'belowBar' : 'aboveBar',
-                                color: pos.is_bullish ? '#22C55E' : '#EF4444',
-                                shape: pos.is_bullish ? 'arrowUp' : 'arrowDown',
-                                text: patLabel,
-                            });
-                        }
-
-                        markers.sort((a, b) => a.time - b.time);
-                        if (markers.length > 0) {
-                            candleSeries.setMarkers(markers);
-                        }
-
-                        const infoDiv = document.createElement('div');
-                        infoDiv.className = 'absolute top-2 left-2 bg-gray-900/90 px-3 py-2 rounded-lg text-xs z-10';
-                        infoDiv.innerHTML = `
-                            <div class="text-white font-medium mb-1">${patLabel}</div>
-                            <div class="text-gray-400">Найдено: <span class="text-green-400">${patternPositions.length}</span> совпадений</div>
-                            <div class="mt-1 flex items-center gap-2">
-                                <span class="inline-block w-2 h-2 bg-green-500 rounded-full"></span><span class="text-gray-500">Бычий</span>
-                                <span class="inline-block w-2 h-2 bg-red-500 rounded-full"></span><span class="text-gray-500">Медвежий</span>
-                            </div>
-                        `;
-                        container.style.position = 'relative';
-                        container.appendChild(infoDiv);
-
-                        if (patternPositions.length > 0) {
-                            const lastPos = patternPositions[patternPositions.length - 1];
-                            debugLwChart.timeScale().scrollToPosition(-candles.length + candles.findIndex(c => c.time === lastPos.time) + 5, false);
-                        }
-                    }
-                } else {
+                {
                     const highPivots = pivots.filter(p => p.is_high);
                     const lowPivots = pivots.filter(p => !p.is_high);
 
