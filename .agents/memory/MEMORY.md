@@ -3,3 +3,4 @@
 - [Synthetic validation measurement](synthetic-validation-measurement.md) — validate.py/setsid logs are empty & full-dataset runner OOMs here; measure recall/FPR via foreground `timeout 115 python -u` calling extract_features_causal directly.
 - [ML relevance hard filter](ml-relevance-hard-filter.md) — synthetic-trained ML model mis-scores real data; hard-gate only after enough real feedback (n_feedback >= threshold).
 - [Trend staleness](trend-staleness.md) — trends invalidate on reversal; both scan paths must honor is_pattern_active AND detected_patterns must exclude stale candidates.
+- [Docs/UI drift](docs-code-drift.md) — replit.md & frontend advertise deleted features (candlestick patterns, fibonacci); verify in backend before trusting any feature claim.
