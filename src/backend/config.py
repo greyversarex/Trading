@@ -209,6 +209,13 @@ class MLConfig:
 
 
 @dataclass
+class CandleConfig:
+    """Параметры детекции свечных паттернов."""
+
+    max_age: int = 10  # максимальный возраст паттерна в свечах
+
+
+@dataclass
 class AppConfig:
     """Корневой агрегат всех групп настроек."""
 
@@ -219,6 +226,7 @@ class AppConfig:
     similarity: SimilarityConfig = field(default_factory=SimilarityConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     ml: MLConfig = field(default_factory=MLConfig)
+    candle: CandleConfig = field(default_factory=CandleConfig)
 
 
 # global singleton
